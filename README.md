@@ -15,20 +15,20 @@ Identify and clean up orphaned Azure resources across all subscriptions in your 
 | **Application Gateways** | ✅ | Empty backend pools |
 | **VNet Gateways** | ✅ | No connections |
 | **Private Endpoints** | ✅ | Not connected to any resource |
-| **Route Tables** | | Not associated with any subnet |
+| **Route Tables** | — | Not associated with any subnet |
 | **NAT Gateways** | ✅ | Not associated with any subnet |
 | **Front Door WAF Policies** | ✅ | Not linked to any Front Door |
 | **Traffic Manager Profiles** | ✅ | No endpoints configured |
-| **Virtual Networks** | | No subnets |
-| **Subnets** | | No connected devices (excludes system subnets) |
-| **IP Groups** | | Not referenced by any firewall or policy |
-| **Private DNS Zones** | | No virtual network links |
+| **Virtual Networks** | — | No subnets |
+| **Subnets** | — | No connected devices (excludes system subnets) |
+| **IP Groups** | — | Not referenced by any firewall or policy |
+| **Private DNS Zones** | — | No virtual network links |
 | **DDoS Protection Plans** | ✅ | No associated virtual networks |
 | **Managed Disks** | ✅ | Unattached (disk state = `Unattached`) |
-| **SQL Elastic Pools** | | No databases |
-| **Empty Resource Groups** | | Zero resources inside |
-| **Expired Certificates** | | App Service certs past expiration |
-| **API Connections** | | Disconnected / not ready |
+| **SQL Elastic Pools** | — | No databases |
+| **Empty Resource Groups** | — | Zero resources inside |
+| **Expired Certificates** | — | App Service certs past expiration |
+| **API Connections** | — | Disconnected / not ready |
 
 ## Quick Start
 
