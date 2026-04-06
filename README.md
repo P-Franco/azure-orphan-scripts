@@ -76,6 +76,9 @@ python3 orphan_report.py --format json --output results.json
 # Export to CSV
 python3 orphan_report.py --format csv
 
+# Exclude specific subscriptions from scanning
+python3 orphan_report.py --exclude-subscriptions <sub-id-1> <sub-id-2>
+
 # Generate interactive HTML dashboard (self-contained, no server needed)
 python3 orphan_report.py --format html
 python3 orphan_report.py --format html --output dashboard.html

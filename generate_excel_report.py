@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import re
 import sys
 from datetime import datetime, timezone
@@ -23,9 +24,13 @@ from azure.identity import DefaultAzureCredential
 from azure.mgmt.resourcegraph import ResourceGraphClient
 from azure.mgmt.resourcegraph.models import QueryRequest, QueryRequestOptions
 from azure.mgmt.subscription import SubscriptionClient
+from azure.core.exceptions import HttpResponseError
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+
+logger = logging.getLogger("excel-report")
 
 
 # ── Environment classification ────────────────────────────────────────────
@@ -73,6 +78,12 @@ def classify_resource(resource: dict, sub_envs: dict) -> str:
 
 
 # ── Resource Graph helper ────────────────────────────────────────────────────
+@retry(
+    retry=retry_if_exception_type(HttpResponseError),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    stop=stop_after_attempt(3),
+    reraise=True,
+)
 def run_query(graph_client, query, *, sub_ids=None, mgmt_group=None):
     results = []
     options = QueryRequestOptions(result_format="objectArray")
@@ -82,12 +93,19 @@ def run_query(graph_client, query, *, sub_ids=None, mgmt_group=None):
     elif sub_ids:
         kwargs["subscriptions"] = sub_ids
     request = QueryRequest(**kwargs)
-    response = graph_client.resources(request)
-    results.extend(response.data)
-    while response.skip_token:
-        options.skip_token = response.skip_token
+    try:
         response = graph_client.resources(request)
         results.extend(response.data)
+        while response.skip_token:
+            options.skip_token = response.skip_token
+            response = graph_client.resources(request)
+            results.extend(response.data)
+    except HttpResponseError as e:
+        if e.status_code == 403:
+            logger.warning(f"Insufficient permissions for query: {e.message}")
+            return []
+        logger.error(f"Resource Graph query failed: {e.message}")
+        raise
     return results
 
 
@@ -412,14 +430,20 @@ def write_detail_sheet(ws, title, rows_by_category, sub_names, sub_envs, env_fil
 def main():
     parser = argparse.ArgumentParser(description="Generate Excel report of orphaned Azure resources")
     parser.add_argument("--subscription", "-s", help="Scope to a single subscription ID")
+    parser.add_argument("--exclude-subscriptions", nargs="+", default=[],
+                        help="Subscription IDs to exclude from scanning")
     parser.add_argument("--output", "-o", default="azure-orphan-report.xlsx",
                         help="Output Excel file (default: azure-orphan-report.xlsx)")
     args = parser.parse_args()
 
     print("Authenticating...")
-    credential = DefaultAzureCredential()
-    graph_client = ResourceGraphClient(credential)
-    sub_client = SubscriptionClient(credential)
+    try:
+        credential = DefaultAzureCredential()
+        graph_client = ResourceGraphClient(credential)
+        sub_client = SubscriptionClient(credential)
+    except Exception as e:
+        print(f"Authentication failed: {e}")
+        return 1
 
     # ── Collect subscriptions ─────────────────────────────────────────────
     query_kwargs = {}
@@ -441,7 +465,9 @@ def main():
 | project subscriptionId, name""",
             mgmt_group=tenant_id,
         )
-        sub_names = {s["subscriptionId"]: s["name"] for s in all_subs}
+        excluded = set(args.exclude_subscriptions)
+        sub_names = {s["subscriptionId"]: s["name"] for s in all_subs
+                     if s["subscriptionId"] not in excluded}
 
     sub_envs = {sid: classify_subscription(sname) for sid, sname in sub_names.items()}
     print(f"Scope: {len(sub_names)} subscriptions")
@@ -618,7 +644,8 @@ def main():
     wb.save(args.output)
     print(f"\n✓ Report saved to: {args.output}")
     print(f"  Sheets: Summary | Production & SharedServices | Dev - QA - UAT | All Resources")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

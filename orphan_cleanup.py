@@ -36,6 +36,7 @@ from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.web import WebSiteManagementClient
 from azure.core.exceptions import HttpResponseError
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 BOLD = "\033[1m"
@@ -105,6 +106,12 @@ logger.addHandler(fh)
 
 
 # ── Resource Graph helper ────────────────────────────────────────────────────
+@retry(
+    retry=retry_if_exception_type(HttpResponseError),
+    wait=wait_exponential(multiplier=1, min=2, max=30),
+    stop=stop_after_attempt(3),
+    reraise=True,
+)
 def run_query(
     graph_client: ResourceGraphClient,
     query: str,
@@ -114,6 +121,7 @@ def run_query(
 ) -> list[dict]:
     """Run a Resource Graph query, handling pagination.
     Scope by subscription IDs or management group (tenant root for tenant-wide).
+    Retries up to 3 times on transient Azure errors with exponential backoff.
     """
     results = []
     options = QueryRequestOptions(result_format="objectArray")
@@ -123,13 +131,20 @@ def run_query(
     elif sub_ids:
         kwargs["subscriptions"] = sub_ids
     request = QueryRequest(**kwargs)
-    response = graph_client.resources(request)
-    results.extend(response.data)
-
-    while response.skip_token:
-        options.skip_token = response.skip_token
+    try:
         response = graph_client.resources(request)
         results.extend(response.data)
+
+        while response.skip_token:
+            options.skip_token = response.skip_token
+            response = graph_client.resources(request)
+            results.extend(response.data)
+    except HttpResponseError as e:
+        if e.status_code == 403:
+            logger.warning(f"Insufficient permissions for query: {e.message}")
+            return []
+        logger.error(f"Resource Graph query failed: {e.message}")
+        raise
 
     return results
 
@@ -415,18 +430,26 @@ def main():
     mode.add_argument("--dry-run", action="store_true", default=True, help="Preview only (default)")
     mode.add_argument("--confirm", action="store_true", help="Actually delete resources")
     parser.add_argument("--subscription", "-s", help="Scope to a single subscription ID")
+    parser.add_argument("--exclude-subscriptions", nargs="+", default=[],
+                        help="Subscription IDs to exclude from cleanup")
     parser.add_argument("--production-only", action="store_true",
                         help="Only clean up resources in production subscriptions (skip Dev/QA/UAT)")
     args = parser.parse_args()
 
     dry_run = not args.confirm
 
-    credential = DefaultAzureCredential()
-    graph_client = ResourceGraphClient(credential)
-    sub_client = SubscriptionClient(credential)
+    try:
+        credential = DefaultAzureCredential()
+        graph_client = ResourceGraphClient(credential)
+        sub_client = SubscriptionClient(credential)
+    except Exception as e:
+        print(f"{RED}Authentication failed: {e}{RESET}")
+        logger.error(f"Authentication failed: {e}")
+        return 1
 
     # ── Collect subscriptions ────────────────────────────────────────────────
     query_kwargs: dict = {}  # passed to every run_query call
+    excluded = set(args.exclude_subscriptions)
 
     if args.subscription:
         query_kwargs["sub_ids"] = [args.subscription]
@@ -437,7 +460,7 @@ def main():
         first_tenant = next(sub_client.tenants.list(), None)
         if first_tenant is None:
             print(f"{RED}No tenants found.{RESET}")
-            sys.exit(1)
+            return 1
         tenant_id = first_tenant.tenant_id
         query_kwargs["mgmt_group"] = tenant_id
 
@@ -450,8 +473,11 @@ def main():
 | project subscriptionId, name""",
             mgmt_group=tenant_id,
         )
-        sub_names = {s["subscriptionId"]: s["name"] for s in all_subs}
-        sub_display = f"{len(all_subs)} subscriptions (tenant-wide)"
+        sub_names = {s["subscriptionId"]: s["name"] for s in all_subs
+                     if s["subscriptionId"] not in excluded}
+        if excluded:
+            logger.info(f"Excluded {len(excluded)} subscription(s): {excluded}")
+        sub_display = f"{len(sub_names)} subscriptions (tenant-wide)"
 
     # ── Classify subscriptions by environment ─────────────────────────────
     sub_envs = {sid: classify_subscription(sname) for sid, sname in sub_names.items()}
@@ -624,6 +650,8 @@ def main():
     print(f"Full log: {BOLD}{LOG_FILE}{RESET}")
     print()
 
+    return 1 if failed > 0 else 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
