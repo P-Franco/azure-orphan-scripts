@@ -1,0 +1,39 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Generated reports (contain client data)
+*.xlsx
+*.csv
+*.json
+orphan-dashboard*.html
+orphan-report*.html
+orphan-cleanup.log
+
+# Excel temp files
+~$*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude / Cascade
+.claude/
+
+# Other repos cloned locally
+finops-harness-scripts/
