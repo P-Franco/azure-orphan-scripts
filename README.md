@@ -192,6 +192,7 @@ This classification drives:
 | **CSV** | `python3 orphan_report.py -f csv` | Same as JSON, flat for spreadsheet import |
 | **HTML** | `python3 orphan_report.py -f html` | Interactive dashboard with charts, search, sort, filter |
 | **Excel** | `python3 generate_excel_report.py` | 4 formatted sheets: Summary, Production, Dev/QA/UAT, All Resources |
+| **PowerPoint** | `python3 generate_pptx_slide.py -i scan.json` | 3-slide CIR deck: Executive Summary, Breakdown, Action Items |
 
 All export formats include **resource tags** and **estimated monthly cost** per resource.
 
@@ -201,6 +202,7 @@ All export formats include **resource tags** and **estimated monthly cost** per 
 ├── orphan_report.py           # Report script (read-only, console/json/csv/html)
 ├── orphan_cleanup.py          # Cleanup script (dry-run default)
 ├── generate_excel_report.py   # Excel workbook generator
+├── generate_pptx_slide.py     # PowerPoint CIR deck generator (3 slides)
 ├── requirements.txt           # Python dependencies
 └── README.md
 ```
