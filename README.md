@@ -149,18 +149,25 @@ Resources are deleted in safe dependency order to avoid conflicts:
 
 ## Environment Classification
 
-Both scripts automatically classify subscriptions as **Production** or **Non-Production** based on subscription name keywords:
+Each resource is classified as **Production** or **Non-Production** using a three-tier approach (most specific wins):
 
-| Classification | Matching Keywords |
-|---|---|
-| **Non-Production** | `dev`, `development`, `qa`, `uat`, `test`, `staging`, `sandbox`, `lab`, `pilot`, `poc`, `nonprod`, `non-prod`, `nonprd`, `non-prd`, `preprod`, `pre-prod`, `stg`, `demo` |
-| **Production** | Everything else (including `SharedServices`, `*_Production`, etc.) |
+| Priority | Source | Example |
+|---|---|---|
+| **1. Resource tags** | `environment` or `env` tag on the resource | `environment: dev` → Non-Production |
+| **2. Naming conventions** | Keywords in resource name or resource group name | `rg-centralus-dev-network` → Non-Production |
+| **3. Subscription name** | Fallback to subscription-level keywords | `ORGS_Development` → Non-Production |
+
+Naming convention matching uses **word boundaries** to avoid false positives — `dev` matches `rg-dev-network` but not `device-manager`.
+
+**Non-Production keywords**: `dev`, `development`, `qa`, `uat`, `test`, `staging`, `sandbox`, `lab`, `pilot`, `poc`, `nonprod`, `non-prod`, `nonprd`, `non-prd`, `preprod`, `pre-prod`, `stg`, `demo`
+
+**Production**: Everything else (including `SharedServices`, `*_Production`, etc.), or any resource with an `environment` tag containing `prod` or `prd`.
 
 This classification drives:
 - **Report**: Resources grouped into separate Production vs Dev/QA/UAT sections with a warning on the non-production group.
 - **Cleanup**: The `--production-only` flag filters out non-production resources. Each resource line shows a `[PROD]` or `[NON-PROD]` tag.
 
-> **Why default to Production?** If a subscription name doesn't match any non-production keyword, it's treated as production. This is the safer default — you'd rather accidentally protect a dev resource than accidentally delete a production one.
+> **Why default to Production?** If no tag, name, or subscription matches a non-production keyword, the resource is treated as production. This is the safer default — you'd rather accidentally protect a dev resource than accidentally delete a production one.
 
 ## How It Works
 

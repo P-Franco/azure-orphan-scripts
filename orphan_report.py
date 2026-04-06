@@ -17,6 +17,7 @@ Usage:
 import argparse
 import csv
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -53,6 +54,50 @@ def classify_subscription(sub_name: str) -> str:
         if kw in name_lower:
             return "NON-PRODUCTION"
     return "PRODUCTION"
+
+
+# Tag keys commonly used for environment classification
+_ENV_TAG_KEYS = {"environment", "env"}
+# Regex patterns for word-boundary keyword matching (compiled once)
+_NON_PROD_PATTERNS = [
+    re.compile(r"(?<![a-z])" + re.escape(kw) + r"(?![a-z])")
+    for kw in NON_PROD_KEYWORDS
+]
+
+
+def classify_resource(resource: dict, sub_envs: dict) -> str:
+    """Classify a single resource as PRODUCTION or NON-PRODUCTION.
+
+    Precedence (most specific wins):
+      1. Resource tags — 'environment' or 'env' tag value
+      2. Naming conventions — resource name or resource group name keywords
+      3. Subscription name — fallback to subscription-level classification
+
+    Word-boundary matching is used for names to avoid false positives
+    (e.g. 'dev' won't match 'device').
+    """
+    # 1. Check environment tags
+    tags = resource.get("tags") or {}
+    if isinstance(tags, dict):
+        for tk, tv in tags.items():
+            if tk.lower() in _ENV_TAG_KEYS:
+                val = str(tv).lower().strip()
+                for kw in NON_PROD_KEYWORDS:
+                    if kw in val:
+                        return "NON-PRODUCTION"
+                if any(p in val for p in ("prod", "prd")):
+                    return "PRODUCTION"
+
+    # 2. Check resource name and resource group naming conventions
+    name_lower = resource.get("name", "").lower()
+    rg_lower = resource.get("resourceGroup", "").lower()
+    for pattern in _NON_PROD_PATTERNS:
+        if pattern.search(name_lower) or pattern.search(rg_lower):
+            return "NON-PRODUCTION"
+
+    # 3. Fall back to subscription-level classification
+    sub_id = resource.get("subscriptionId", "")
+    return sub_envs.get(sub_id, "PRODUCTION")
 
 
 # ── Resource Graph helper ────────────────────────────────────────────────────
@@ -361,7 +406,7 @@ def _flatten_row(r: dict, category: str, cfg: dict, sub_names: dict, sub_envs: d
         "sku": r.get("sku", "") or "",
         "incursCost": cfg.get("cost", False),
         "estimatedMonthlyCost": COST_ESTIMATES.get(category, 0.0),
-        "environment": sub_envs.get(sub_id, "PRODUCTION"),
+        "environment": classify_resource(r, sub_envs),
         "tags": tags if isinstance(tags, dict) else {},
     }
 
@@ -950,7 +995,7 @@ def main():
                 extra_col = cfg.get("extra_col", "")
                 all_rows = category_results.get(name, [])
                 rows = [r for r in all_rows
-                        if sub_envs.get(r.get("subscriptionId", "")) == env_key]
+                        if classify_resource(r, sub_envs) == env_key]
                 if not rows:
                     continue
 

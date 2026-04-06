@@ -22,6 +22,7 @@ WARNING: --confirm will PERMANENTLY DELETE resources. Review dry-run output
 
 import argparse
 import logging
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -63,6 +64,34 @@ def classify_subscription(sub_name: str) -> str:
         if kw in name_lower:
             return "NON-PRODUCTION"
     return "PRODUCTION"
+
+
+_ENV_TAG_KEYS = {"environment", "env"}
+_NON_PROD_PATTERNS = [
+    re.compile(r"(?<![a-z])" + re.escape(kw) + r"(?![a-z])")
+    for kw in NON_PROD_KEYWORDS
+]
+
+
+def classify_resource(resource: dict, sub_envs: dict) -> str:
+    """Classify a resource using tags, naming conventions, then subscription fallback."""
+    tags = resource.get("tags") or {}
+    if isinstance(tags, dict):
+        for tk, tv in tags.items():
+            if tk.lower() in _ENV_TAG_KEYS:
+                val = str(tv).lower().strip()
+                for kw in NON_PROD_KEYWORDS:
+                    if kw in val:
+                        return "NON-PRODUCTION"
+                if any(p in val for p in ("prod", "prd")):
+                    return "PRODUCTION"
+    name_lower = resource.get("name", "").lower()
+    rg_lower = resource.get("resourceGroup", "").lower()
+    for pattern in _NON_PROD_PATTERNS:
+        if pattern.search(name_lower) or pattern.search(rg_lower):
+            return "NON-PRODUCTION"
+    sub_id = resource.get("subscriptionId", "")
+    return sub_envs.get(sub_id, "PRODUCTION")
 
 
 # ── Logging ──────────────────────────────────────────────────────────────────
@@ -480,7 +509,7 @@ def main():
         if args.production_only:
             all_count = len(resources)
             resources = [r for r in resources
-                         if sub_envs.get(r.get("subscriptionId", "")) == "PRODUCTION"]
+                         if classify_resource(r, sub_envs) == "PRODUCTION"]
             nonprod_skipped = all_count - len(resources)
             skipped += nonprod_skipped
 
@@ -501,7 +530,7 @@ def main():
             rg = r.get("resourceGroup", "N/A")
             sub_id = r.get("subscriptionId", "")
             sub_label = sub_names.get(sub_id, sub_id)
-            env = sub_envs.get(sub_id, "PRODUCTION")
+            env = classify_resource(r, sub_envs)
             env_tag = f" {GREEN}[PROD]{RESET}" if env == "PRODUCTION" else f" {YELLOW}[NON-PROD]{RESET}"
 
             if dry_run:
@@ -532,7 +561,7 @@ def main():
     if args.production_only:
         all_rg_count = len(empty_rgs)
         empty_rgs = [r for r in empty_rgs
-                     if sub_envs.get(r.get("subscriptionId", "")) == "PRODUCTION"]
+                     if classify_resource(r, sub_envs) == "PRODUCTION"]
         rg_nonprod_skipped = all_rg_count - len(empty_rgs)
         skipped += rg_nonprod_skipped
 
@@ -546,7 +575,7 @@ def main():
             rg_name = r.get("name", "N/A")
             sub_id = r.get("subscriptionId", "")
             sub_label = sub_names.get(sub_id, sub_id)
-            env = sub_envs.get(sub_id, "PRODUCTION")
+            env = classify_resource(r, sub_envs)
             env_tag = f" {GREEN}[PROD]{RESET}" if env == "PRODUCTION" else f" {YELLOW}[NON-PROD]{RESET}"
 
             if dry_run:

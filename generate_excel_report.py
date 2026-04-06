@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,6 +42,34 @@ def classify_subscription(sub_name: str) -> str:
         if kw in name_lower:
             return "NON-PRODUCTION"
     return "PRODUCTION"
+
+
+_ENV_TAG_KEYS = {"environment", "env"}
+_NON_PROD_PATTERNS = [
+    re.compile(r"(?<![a-z])" + re.escape(kw) + r"(?![a-z])")
+    for kw in NON_PROD_KEYWORDS
+]
+
+
+def classify_resource(resource: dict, sub_envs: dict) -> str:
+    """Classify a resource using tags, naming conventions, then subscription fallback."""
+    tags = resource.get("tags") or {}
+    if isinstance(tags, dict):
+        for tk, tv in tags.items():
+            if tk.lower() in _ENV_TAG_KEYS:
+                val = str(tv).lower().strip()
+                for kw in NON_PROD_KEYWORDS:
+                    if kw in val:
+                        return "NON-PRODUCTION"
+                if any(p in val for p in ("prod", "prd")):
+                    return "PRODUCTION"
+    name_lower = resource.get("name", "").lower()
+    rg_lower = resource.get("resourceGroup", "").lower()
+    for pattern in _NON_PROD_PATTERNS:
+        if pattern.search(name_lower) or pattern.search(rg_lower):
+            return "NON-PRODUCTION"
+    sub_id = resource.get("subscriptionId", "")
+    return sub_envs.get(sub_id, "PRODUCTION")
 
 
 # ── Resource Graph helper ────────────────────────────────────────────────────
@@ -343,7 +372,7 @@ def write_detail_sheet(ws, title, rows_by_category, sub_names, sub_envs, env_fil
     row_num = 2
     for cat_name, cfg, resources in rows_by_category:
         filtered = [r for r in resources
-                    if sub_envs.get(r.get("subscriptionId", "")) == env_filter]
+                    if classify_resource(r, sub_envs) == env_filter]
         if not filtered:
             continue
 
@@ -365,7 +394,7 @@ def write_detail_sheet(ws, title, rows_by_category, sub_names, sub_envs, env_fil
             cost_val = ws.cell(row=row_num, column=9, value=est_cost)
             cost_val.number_format = '$#,##0.00'
 
-            env = sub_envs.get(sub_id, "PRODUCTION")
+            env = classify_resource(r, sub_envs)
             env_cell = ws.cell(row=row_num, column=10, value=env)
             env_cell.fill = PROD_FILL if env == "PRODUCTION" else NONPROD_FILL
 
@@ -466,7 +495,7 @@ def main():
     total = sum(len(r) for _, _, r in all_rows)
     prod_total = sum(
         1 for _, _, rows in all_rows for r in rows
-        if sub_envs.get(r.get("subscriptionId", "")) == "PRODUCTION"
+        if classify_resource(r, sub_envs) == "PRODUCTION"
     )
     nonprod_total = total - prod_total
     cost_total = sum(
@@ -507,7 +536,7 @@ def main():
     grand_nonprod = 0
     grand_cost = 0.0
     for cat_name, cfg, rows in all_rows:
-        prod_count = sum(1 for r in rows if sub_envs.get(r.get("subscriptionId", "")) == "PRODUCTION")
+        prod_count = sum(1 for r in rows if classify_resource(r, sub_envs) == "PRODUCTION")
         nonprod_count = len(rows) - prod_count
         grand_prod += prod_count
         grand_nonprod += nonprod_count
@@ -564,7 +593,7 @@ def main():
         est_cost = COST_ESTIMATES.get(cat_name, 0.0)
         for r in resources:
             sub_id = r.get("subscriptionId", "")
-            env = sub_envs.get(sub_id, "PRODUCTION")
+            env = classify_resource(r, sub_envs)
             ws_all.cell(row=row_num, column=1, value=cat_name)
             ws_all.cell(row=row_num, column=2, value=cfg["section"])
             ws_all.cell(row=row_num, column=3, value=r.get("name", ""))
