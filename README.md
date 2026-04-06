@@ -86,6 +86,10 @@ python3 orphan_report.py --format html --output dashboard.html
 # Generate formatted Excel workbook (4 sheets)
 python3 generate_excel_report.py
 python3 generate_excel_report.py --output my_report.xlsx
+
+# Generate a CIR-ready PowerPoint summary slide
+python3 orphan_report.py --format json --output scan.json
+python3 generate_pptx_slide.py --input scan.json --client "Contoso Corp"
 ```
 
 The report automatically groups results into two sections:

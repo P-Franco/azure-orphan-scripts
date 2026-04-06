@@ -7,9 +7,11 @@ env/
 *.xlsx
 *.csv
 *.json
+*.pptx
 orphan-dashboard*.html
 orphan-report*.html
 orphan-cleanup.log
+orphan-report.log
 
 # Excel temp files
 ~$*
