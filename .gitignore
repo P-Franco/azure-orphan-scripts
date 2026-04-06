@@ -37,5 +37,9 @@ Thumbs.db
 # Claude / Cascade
 .claude/
 
+# Future project specs (local only)
+future-web-app.md
+automation-pipeline.md
+
 # Other repos cloned locally
 finops-harness-scripts/
