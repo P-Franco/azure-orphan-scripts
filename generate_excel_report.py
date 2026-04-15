@@ -115,14 +115,14 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.web/serverfarms'
 | where properties.numberOfSites == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True, "section": "Compute",
     },
     "Availability Sets with no VMs": {
         "query": """Resources
 | where type =~ 'microsoft.compute/availabilitysets'
 | where properties.virtualMachines == '[]' or array_length(properties.virtualMachines) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True, "section": "Compute",
     },
     "Unassociated Public IPs": {
@@ -130,7 +130,7 @@ QUERIES = {
 | where type =~ 'microsoft.network/publicipaddresses'
 | where properties.ipConfiguration == '' or isnull(properties.ipConfiguration)
 | where properties.natGateway == '' or isnull(properties.natGateway)
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True, "section": "Networking",
     },
     "NICs not attached to a VM": {
@@ -138,7 +138,7 @@ QUERIES = {
 | where type =~ 'microsoft.network/networkinterfaces'
 | where isnull(properties.virtualMachine) or properties.virtualMachine == ''
 | where isnull(properties.privateEndpoint) or properties.privateEndpoint == ''
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True, "section": "Networking",
     },
     "NSGs not associated with subnet or NIC": {
@@ -146,21 +146,21 @@ QUERIES = {
 | where type =~ 'microsoft.network/networksecuritygroups'
 | where isnull(properties.networkInterfaces) or properties.networkInterfaces == '[]' or array_length(properties.networkInterfaces) == 0
 | where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True, "section": "Networking",
     },
     "Load Balancers with empty backend pools": {
         "query": """Resources
 | where type =~ 'microsoft.network/loadbalancers'
 | where properties.backendAddressPools == '[]' or array_length(properties.backendAddressPools) == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True, "section": "Networking",
     },
     "Application Gateways with empty backend pools": {
         "query": """Resources
 | where type =~ 'microsoft.network/applicationgateways'
 | where properties.backendAddressPools == '[]' or array_length(properties.backendAddressPools) == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.tier), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.tier), tags""",
         "cost": True, "section": "Networking",
     },
     "VNet Gateways with no connections": {
@@ -173,7 +173,7 @@ QUERIES = {
   | project connectionGwId=tolower(tostring(gw))
 ) on $left.id == $right.connectionGwId
 | where isnull(connectionGwId)
-| project name, resourceGroup, location, subscriptionId, sku=tostring(properties.sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(properties.sku.name), tags""",
         "cost": True, "section": "Networking",
     },
     "Private Endpoints not connected to a resource": {
@@ -181,21 +181,21 @@ QUERIES = {
 | where type =~ 'microsoft.network/privateendpoints'
 | where isnull(properties.privateLinkServiceConnections) or array_length(properties.privateLinkServiceConnections) == 0
 | where isnull(properties.manualPrivateLinkServiceConnections) or array_length(properties.manualPrivateLinkServiceConnections) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True, "section": "Networking",
     },
     "Route Tables not associated with a subnet": {
         "query": """Resources
 | where type =~ 'microsoft.network/routetables'
 | where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": False, "section": "Networking",
     },
     "NAT Gateways not associated with a subnet": {
         "query": """Resources
 | where type =~ 'microsoft.network/natgateways'
 | where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True, "section": "Networking",
     },
     "Front Door WAF Policies not linked to a Front Door": {
@@ -203,24 +203,27 @@ QUERIES = {
 | where type =~ 'microsoft.network/frontdoorwebapplicationfirewallpolicies'
 | where (isnull(properties.frontendEndpointLinks) or array_length(properties.frontendEndpointLinks) == 0)
 | where (isnull(properties.securityPolicyLinks) or array_length(properties.securityPolicyLinks) == 0)
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True, "section": "Networking",
     },
     "Traffic Manager Profiles with no endpoints": {
         "query": """Resources
 | where type =~ 'microsoft.network/trafficmanagerprofiles'
 | where properties.endpoints == '[]' or array_length(properties.endpoints) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True, "section": "Networking",
     },
     "Virtual Networks with no subnets": {
         "query": """Resources
 | where type =~ 'microsoft.network/virtualnetworks'
 | where isnull(properties.subnets) or array_length(properties.subnets) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": False, "section": "Networking",
     },
     "Subnets without connected devices": {
+        # Subnets have no independent resource ID in Cost Management; empty id
+        # means cost lookup falls through to $0 (which is correct — subnets
+        # don't incur standalone charges).
         "query": """Resources
 | where type =~ 'microsoft.network/virtualnetworks'
 | mv-expand subnet = properties.subnets
@@ -229,7 +232,7 @@ QUERIES = {
 | where (isnull(subnet.properties.privateEndpoints) or array_length(subnet.properties.privateEndpoints) == 0)
 | where (isnull(subnet.properties.delegations) or array_length(subnet.properties.delegations) == 0)
 | extend subnetName = tostring(subnet.name)
-| project name=subnetName, resourceGroup, location, subscriptionId, sku=name, tags""",
+| project id='', name=subnetName, resourceGroup, location, subscriptionId, sku=name, tags""",
         "cost": False, "section": "Networking",
     },
     "IP Groups not referenced by any firewall": {
@@ -237,42 +240,42 @@ QUERIES = {
 | where type =~ 'microsoft.network/ipgroups'
 | where (isnull(properties.firewalls) or array_length(properties.firewalls) == 0)
 | where (isnull(properties.firewallPolicies) or array_length(properties.firewallPolicies) == 0)
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": False, "section": "Networking",
     },
     "Private DNS Zones with no VNet links": {
         "query": """Resources
 | where type =~ 'microsoft.network/privatednszones'
 | where properties.numberOfVirtualNetworkLinks == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": False, "section": "Networking",
     },
     "DDoS Protection Plans with no associated VNets": {
         "query": """Resources
 | where type =~ 'microsoft.network/ddosprotectionplans'
 | where isnull(properties.virtualNetworks) or properties.virtualNetworks == '[]' or array_length(properties.virtualNetworks) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True, "section": "Networking",
     },
     "Unattached Managed Disks": {
         "query": """Resources
 | where type =~ 'microsoft.compute/disks'
 | where properties.diskState =~ 'Unattached'
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True, "section": "Storage",
     },
     "SQL Elastic Pools with no databases": {
         "query": """Resources
 | where type =~ 'microsoft.sql/servers/elasticpools'
 | where isnull(properties.perDatabaseSettings) or properties.numberOfDatabases == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": False, "section": "Database",
     },
     "Expired App Service Certificates": {
         "query": """Resources
 | where type =~ 'microsoft.web/certificates'
 | where properties.expirationDate < now()
-| project name, resourceGroup, location, subscriptionId, sku=tostring(properties.expirationDate), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(properties.expirationDate), tags""",
         "cost": False, "section": "Other",
     },
     "Disconnected API Connections": {
@@ -282,7 +285,7 @@ QUERIES = {
 | where array_length(properties.statuses) > 0
 | extend connStatus = tostring(properties.statuses[0]['status'])
 | where connStatus !in~ ('Connected', 'Ready')
-| project name, resourceGroup, location, subscriptionId, sku=connStatus, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=connStatus, tags""",
         "cost": False, "section": "Other",
     },
 }
@@ -374,12 +377,38 @@ def _format_tags(tags) -> str:
     return json.dumps(tags, separators=(", ", ": "))
 
 
-def write_detail_sheet(ws, title, rows_by_category, sub_names, sub_envs, env_filter):
+def _lookup_cost(r: dict, cat_name: str, cost_result):
+    """Resolve (monthly_cost, rolling30d, last_billing_month, source) for a
+    resource. Prefers real Cost Management data; falls back to the hardcoded
+    per-category estimate if no billing history exists.
+
+    Returns:
+      (monthly_cost, rolling30d, last_billing_month, source)
+      where `source` is one of: 'costManagement', 'estimate', 'estimate-zero-cm'
+    """
+    resource_id = str(r.get("id", "") or "").lower()
+    estimate = float(COST_ESTIMATES.get(cat_name, 0.0))
+
+    if cost_result is not None and resource_id:
+        rec = cost_result.get_cost(resource_id)
+        if rec is not None:
+            # Prefer rolling 30d as canonical monthly figure.
+            monthly = rec.rolling30d if rec.rolling30d > 0 else rec.last_billing_month
+            if monthly > 0:
+                return monthly, rec.rolling30d, rec.last_billing_month, "costManagement"
+            # Real query matched but returned $0 — resource too new to bill.
+            return estimate, rec.rolling30d, rec.last_billing_month, "estimate-zero-cm"
+
+    return estimate, 0.0, 0.0, "estimate"
+
+
+def write_detail_sheet(ws, title, rows_by_category, sub_names, sub_envs, env_filter, cost_result=None):
     """Write a detail sheet (Production or Dev/QA/UAT)."""
     # Headers
     headers = ["Category", "Section", "Resource Name", "Resource Group",
                "Location", "Subscription", "SKU / Detail", "Incurs Cost?",
-               "Est. Monthly Cost", "Environment", "Tags"]
+               "Monthly Cost", "Rolling 30d (actual)", "Last Billing Month",
+               "Cost Source", "Environment", "Tags"]
     for col, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col, value=h)
         cell.font = HEADER_FONT
@@ -394,10 +423,10 @@ def write_detail_sheet(ws, title, rows_by_category, sub_names, sub_envs, env_fil
         if not filtered:
             continue
 
-        est_cost = COST_ESTIMATES.get(cat_name, 0.0)
-
         for r in filtered:
             sub_id = r.get("subscriptionId", "")
+            monthly, rolling, last_month, source = _lookup_cost(r, cat_name, cost_result)
+
             ws.cell(row=row_num, column=1, value=cat_name)
             ws.cell(row=row_num, column=2, value=cfg["section"])
             ws.cell(row=row_num, column=3, value=r.get("name", ""))
@@ -409,16 +438,24 @@ def write_detail_sheet(ws, title, rows_by_category, sub_names, sub_envs, env_fil
             cost_cell = ws.cell(row=row_num, column=8, value="Yes" if cfg["cost"] else "No")
             cost_cell.font = COST_YES if cfg["cost"] else COST_NO
 
-            cost_val = ws.cell(row=row_num, column=9, value=est_cost)
-            cost_val.number_format = '$#,##0.00'
+            monthly_cell = ws.cell(row=row_num, column=9, value=round(monthly, 2))
+            monthly_cell.number_format = '$#,##0.00'
+
+            rolling_cell = ws.cell(row=row_num, column=10, value=round(rolling, 2))
+            rolling_cell.number_format = '$#,##0.00'
+
+            last_month_cell = ws.cell(row=row_num, column=11, value=round(last_month, 2))
+            last_month_cell.number_format = '$#,##0.00'
+
+            ws.cell(row=row_num, column=12, value=source)
 
             env = classify_resource(r, sub_envs)
-            env_cell = ws.cell(row=row_num, column=10, value=env)
+            env_cell = ws.cell(row=row_num, column=13, value=env)
             env_cell.fill = PROD_FILL if env == "PRODUCTION" else NONPROD_FILL
 
-            ws.cell(row=row_num, column=11, value=_format_tags(r.get("tags")))
+            ws.cell(row=row_num, column=14, value=_format_tags(r.get("tags")))
 
-            for c in range(1, 12):
+            for c in range(1, 15):
                 ws.cell(row=row_num, column=c).border = THIN_BORDER
 
             row_num += 1
@@ -434,6 +471,15 @@ def main():
                         help="Subscription IDs to exclude from scanning")
     parser.add_argument("--output", "-o", default="azure-orphan-report.xlsx",
                         help="Output Excel file (default: azure-orphan-report.xlsx)")
+    parser.add_argument("--no-cost-data", action="store_true",
+                        help="Skip Cost Management API enrichment and use hardcoded "
+                             "estimates only. Use this if the caller lacks the "
+                             "'Cost Management Reader' role.")
+    parser.add_argument("--cost-cache-dir", default=".",
+                        help="Directory for daily cost-cache-YYYYMMDD.json files (default: cwd)")
+    parser.add_argument("--refresh-cost-data", action="store_true",
+                        help="Force a fresh pull from Cost Management even if "
+                             "a same-day cache exists.")
     args = parser.parse_args()
 
     print("Authenticating...")
@@ -506,6 +552,46 @@ def main():
             print(f"  ✗ Empty Resource Groups: {e}")
             category_results["Empty Resource Groups"] = []
 
+    # ── Cost Management enrichment (real cost data) ──────────────────────
+    cost_result = None
+    if not args.no_cost_data:
+        try:
+            from azure_cost_enrichment import enrich_costs
+
+            subs_with_orphans = {
+                r.get("subscriptionId", "")
+                for rows in category_results.values()
+                for r in rows
+                if r.get("subscriptionId")
+            }
+            if subs_with_orphans:
+                print("\nEnriching with Cost Management data...")
+                cost_result = enrich_costs(
+                    credential,
+                    sorted(subs_with_orphans),
+                    cache_dir=args.cost_cache_dir,
+                    use_cache=not args.refresh_cost_data,
+                )
+                window = cost_result.rolling30d_window
+                if window[0]:
+                    print(f"  Rolling 30d window: {window[0]} → {window[1]}")
+                print(
+                    f"  {len(cost_result.subscriptions_queried)} subscription(s) "
+                    f"queried, {len(cost_result.cost_map)} resource records, "
+                    f"${cost_result.total_rolling30d:,.2f} total rolling 30d spend"
+                )
+                if cost_result.subscriptions_failed:
+                    for sid, err in cost_result.subscriptions_failed.items():
+                        name = sub_names.get(sid, sid)
+                        print(f"  ⚠  {name}: {err}")
+        except ImportError:
+            print("  azure_cost_enrichment module not available — using estimates.")
+            cost_result = None
+        except Exception as e:
+            print(f"  Cost enrichment failed ({e}) — falling back to estimates.")
+            logger.warning(f"Cost enrichment failed: {e}")
+            cost_result = None
+
     # ── Build ordered list of (category, config, rows) ────────────────────
     all_rows = []
     for cat_name, cfg in QUERIES.items():
@@ -550,8 +636,25 @@ def main():
     ws_sum.cell(row=2, column=1, value=f"Generated: {now}").font = Font(name="Calibri", size=10, italic=True)
     ws_sum.cell(row=3, column=1, value=f"Scope: {len(sub_names)} subscriptions (tenant-wide)").font = Font(name="Calibri", size=10, italic=True)
 
+    # Cost Management footnote
+    if cost_result is not None:
+        window_from, window_to = cost_result.rolling30d_window
+        ws_sum.cell(
+            row=4, column=1,
+            value=f"Cost data: Azure Cost Management AmortizedCost — "
+                  f"rolling 30d window {window_from} → {window_to}"
+        ).font = Font(name="Calibri", size=10, italic=True, color="548235")
+    else:
+        ws_sum.cell(
+            row=4, column=1,
+            value="Cost data: hardcoded per-category estimates "
+                  "(Cost Management enrichment disabled or unavailable)"
+        ).font = Font(name="Calibri", size=10, italic=True, color="C00000")
+
     # Summary table
-    sum_headers = ["Category", "Section", "Production", "Dev/QA/UAT", "Total", "Incurs Cost?", "Est. Monthly Cost"]
+    sum_headers = ["Category", "Section", "Production", "Dev/QA/UAT", "Total",
+                   "Incurs Cost?", "Monthly Cost", "Rolling 30d (actual)",
+                   "Last Billing Month"]
     for col, h in enumerate(sum_headers, 1):
         cell = ws_sum.cell(row=5, column=col, value=h)
         cell.font = SUMMARY_HEADER_FONT
@@ -560,14 +663,28 @@ def main():
     row_num = 6
     grand_prod = 0
     grand_nonprod = 0
-    grand_cost = 0.0
+    grand_monthly = 0.0
+    grand_rolling = 0.0
+    grand_last_month = 0.0
     for cat_name, cfg, rows in all_rows:
         prod_count = sum(1 for r in rows if classify_resource(r, sub_envs) == "PRODUCTION")
         nonprod_count = len(rows) - prod_count
         grand_prod += prod_count
         grand_nonprod += nonprod_count
-        est_cost = COST_ESTIMATES.get(cat_name, 0.0) * len(rows)
-        grand_cost += est_cost
+
+        # Sum per-resource monthly/rolling/last-month rather than
+        # category_estimate * count — this picks up real costs where available.
+        cat_monthly = 0.0
+        cat_rolling = 0.0
+        cat_last_month = 0.0
+        for r in rows:
+            monthly, rolling, last_month, _src = _lookup_cost(r, cat_name, cost_result)
+            cat_monthly += monthly
+            cat_rolling += rolling
+            cat_last_month += last_month
+        grand_monthly += cat_monthly
+        grand_rolling += cat_rolling
+        grand_last_month += cat_last_month
 
         ws_sum.cell(row=row_num, column=1, value=cat_name)
         ws_sum.cell(row=row_num, column=2, value=cfg["section"])
@@ -576,9 +693,15 @@ def main():
         ws_sum.cell(row=row_num, column=5, value=len(rows)).font = Font(bold=True)
         cost_cell = ws_sum.cell(row=row_num, column=6, value="Yes" if cfg["cost"] else "No")
         cost_cell.font = COST_YES if cfg["cost"] else COST_NO
-        est_cell = ws_sum.cell(row=row_num, column=7, value=est_cost)
-        est_cell.number_format = '$#,##0.00'
-        for c in range(1, 8):
+
+        monthly_cell = ws_sum.cell(row=row_num, column=7, value=round(cat_monthly, 2))
+        monthly_cell.number_format = '$#,##0.00'
+        rolling_cell = ws_sum.cell(row=row_num, column=8, value=round(cat_rolling, 2))
+        rolling_cell.number_format = '$#,##0.00'
+        last_cell = ws_sum.cell(row=row_num, column=9, value=round(cat_last_month, 2))
+        last_cell.number_format = '$#,##0.00'
+
+        for c in range(1, 10):
             ws_sum.cell(row=row_num, column=c).border = THIN_BORDER
         row_num += 1
 
@@ -588,38 +711,46 @@ def main():
     ws_sum.cell(row=row_num, column=3, value=grand_prod).font = Font(bold=True, size=12)
     ws_sum.cell(row=row_num, column=4, value=grand_nonprod).font = Font(bold=True, size=12)
     ws_sum.cell(row=row_num, column=5, value=total).font = Font(bold=True, size=12)
-    grand_cost_cell = ws_sum.cell(row=row_num, column=7, value=grand_cost)
-    grand_cost_cell.font = Font(bold=True, size=12)
-    grand_cost_cell.number_format = '$#,##0.00'
+    grand_monthly_cell = ws_sum.cell(row=row_num, column=7, value=round(grand_monthly, 2))
+    grand_monthly_cell.font = Font(bold=True, size=12)
+    grand_monthly_cell.number_format = '$#,##0.00'
+    grand_rolling_cell = ws_sum.cell(row=row_num, column=8, value=round(grand_rolling, 2))
+    grand_rolling_cell.font = Font(bold=True, size=12)
+    grand_rolling_cell.number_format = '$#,##0.00'
+    grand_last_cell = ws_sum.cell(row=row_num, column=9, value=round(grand_last_month, 2))
+    grand_last_cell.font = Font(bold=True, size=12)
+    grand_last_cell.number_format = '$#,##0.00'
 
     auto_width(ws_sum)
 
     # ── Production detail sheet ───────────────────────────────────────────
     ws_prod = wb.create_sheet("Production & SharedServices")
-    write_detail_sheet(ws_prod, "Production", all_rows, sub_names, sub_envs, "PRODUCTION")
+    write_detail_sheet(ws_prod, "Production", all_rows, sub_names, sub_envs, "PRODUCTION", cost_result)
 
     # ── Dev/QA/UAT detail sheet ───────────────────────────────────────────
     ws_dev = wb.create_sheet("Dev - QA - UAT")
-    write_detail_sheet(ws_dev, "Dev/QA/UAT", all_rows, sub_names, sub_envs, "NON-PRODUCTION")
+    write_detail_sheet(ws_dev, "Dev/QA/UAT", all_rows, sub_names, sub_envs, "NON-PRODUCTION", cost_result)
 
     # ── All Resources sheet (flat, filterable) ────────────────────────────
     ws_all = wb.create_sheet("All Resources")
     headers = ["Category", "Section", "Resource Name", "Resource Group",
                "Location", "Subscription", "SKU / Detail", "Incurs Cost?",
-               "Est. Monthly Cost", "Environment", "Tags"]
+               "Monthly Cost", "Rolling 30d (actual)", "Last Billing Month",
+               "Cost Source", "Environment", "Tags"]
     for col, h in enumerate(headers, 1):
         cell = ws_all.cell(row=1, column=col, value=h)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
     ws_all.freeze_panes = "A2"
-    ws_all.auto_filter.ref = "A1:K1"
+    ws_all.auto_filter.ref = "A1:N1"
 
     row_num = 2
     for cat_name, cfg, resources in all_rows:
-        est_cost = COST_ESTIMATES.get(cat_name, 0.0)
         for r in resources:
             sub_id = r.get("subscriptionId", "")
             env = classify_resource(r, sub_envs)
+            monthly, rolling, last_month, source = _lookup_cost(r, cat_name, cost_result)
+
             ws_all.cell(row=row_num, column=1, value=cat_name)
             ws_all.cell(row=row_num, column=2, value=cfg["section"])
             ws_all.cell(row=row_num, column=3, value=r.get("name", ""))
@@ -627,14 +758,23 @@ def main():
             ws_all.cell(row=row_num, column=5, value=r.get("location", ""))
             ws_all.cell(row=row_num, column=6, value=sub_names.get(sub_id, sub_id))
             ws_all.cell(row=row_num, column=7, value=r.get("sku", "") or "")
+
             cost_cell = ws_all.cell(row=row_num, column=8, value="Yes" if cfg["cost"] else "No")
             cost_cell.font = COST_YES if cfg["cost"] else COST_NO
-            cost_val = ws_all.cell(row=row_num, column=9, value=est_cost)
-            cost_val.number_format = '$#,##0.00'
-            env_cell = ws_all.cell(row=row_num, column=10, value=env)
+
+            monthly_cell = ws_all.cell(row=row_num, column=9, value=round(monthly, 2))
+            monthly_cell.number_format = '$#,##0.00'
+            rolling_cell = ws_all.cell(row=row_num, column=10, value=round(rolling, 2))
+            rolling_cell.number_format = '$#,##0.00'
+            last_cell = ws_all.cell(row=row_num, column=11, value=round(last_month, 2))
+            last_cell.number_format = '$#,##0.00'
+            ws_all.cell(row=row_num, column=12, value=source)
+
+            env_cell = ws_all.cell(row=row_num, column=13, value=env)
             env_cell.fill = PROD_FILL if env == "PRODUCTION" else NONPROD_FILL
-            ws_all.cell(row=row_num, column=11, value=_format_tags(r.get("tags")))
-            for c in range(1, 12):
+            ws_all.cell(row=row_num, column=14, value=_format_tags(r.get("tags")))
+
+            for c in range(1, 15):
                 ws_all.cell(row=row_num, column=c).border = THIN_BORDER
             row_num += 1
 
@@ -644,6 +784,15 @@ def main():
     wb.save(args.output)
     print(f"\n✓ Report saved to: {args.output}")
     print(f"  Sheets: Summary | Production & SharedServices | Dev - QA - UAT | All Resources")
+    if cost_result is not None:
+        total_rows = sum(len(rows) for _, _, rows in all_rows)
+        real_count = 0
+        for cat_name, _, rows in all_rows:
+            for r in rows:
+                _, _, _, src = _lookup_cost(r, cat_name, cost_result)
+                if src == "costManagement":
+                    real_count += 1
+        print(f"  {real_count} of {total_rows} rows backed by real Cost Management data")
     return 0
 
 

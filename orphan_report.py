@@ -161,7 +161,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.web/serverfarms'
 | where properties.numberOfSites == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True,
         "extra_col": "SKU/Size",
         "section": "COMPUTE",
@@ -171,7 +171,7 @@ QUERIES = {
 | where type =~ 'microsoft.compute/availabilitysets'
 | where properties.virtualMachines == '[]' or array_length(properties.virtualMachines) == 0
 | where tags !has 'DoNotDelete'
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True,
         "extra_col": "",
         "section": "COMPUTE",
@@ -182,7 +182,7 @@ QUERIES = {
 | where type =~ 'microsoft.network/publicipaddresses'
 | where properties.ipConfiguration == '' or isnull(properties.ipConfiguration)
 | where properties.natGateway == '' or isnull(properties.natGateway)
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True,
         "extra_col": "SKU/Size",
         "section": "NETWORKING",
@@ -192,7 +192,7 @@ QUERIES = {
 | where type =~ 'microsoft.network/networkinterfaces'
 | where isnull(properties.virtualMachine) or properties.virtualMachine == ''
 | where isnull(properties.privateEndpoint) or properties.privateEndpoint == ''
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True,
         "extra_col": "",
         "section": "NETWORKING",
@@ -202,7 +202,7 @@ QUERIES = {
 | where type =~ 'microsoft.network/networksecuritygroups'
 | where isnull(properties.networkInterfaces) or properties.networkInterfaces == '[]' or array_length(properties.networkInterfaces) == 0
 | where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True,
         "extra_col": "",
         "section": "NETWORKING",
@@ -211,7 +211,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.network/loadbalancers'
 | where properties.backendAddressPools == '[]' or array_length(properties.backendAddressPools) == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True,
         "extra_col": "SKU/Size",
         "section": "NETWORKING",
@@ -220,7 +220,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.network/applicationgateways'
 | where properties.backendAddressPools == '[]' or array_length(properties.backendAddressPools) == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.tier), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.tier), tags""",
         "cost": True,
         "extra_col": "SKU/Size",
         "section": "NETWORKING",
@@ -235,7 +235,7 @@ QUERIES = {
   | project connectionGwId=tolower(tostring(gw))
 ) on $left.id == $right.connectionGwId
 | where isnull(connectionGwId)
-| project name, resourceGroup, location, subscriptionId, sku=tostring(properties.sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(properties.sku.name), tags""",
         "cost": True,
         "extra_col": "SKU/Size",
         "section": "NETWORKING",
@@ -245,7 +245,7 @@ QUERIES = {
 | where type =~ 'microsoft.network/privateendpoints'
 | where isnull(properties.privateLinkServiceConnections) or array_length(properties.privateLinkServiceConnections) == 0
 | where isnull(properties.manualPrivateLinkServiceConnections) or array_length(properties.manualPrivateLinkServiceConnections) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True,
         "extra_col": "",
         "section": "NETWORKING",
@@ -254,7 +254,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.network/routetables'
 | where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": False,
         "extra_col": "",
         "section": "NETWORKING",
@@ -263,7 +263,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.network/natgateways'
 | where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True,
         "extra_col": "SKU/Size",
         "section": "NETWORKING",
@@ -273,7 +273,7 @@ QUERIES = {
 | where type =~ 'microsoft.network/frontdoorwebapplicationfirewallpolicies'
 | where (isnull(properties.frontendEndpointLinks) or array_length(properties.frontendEndpointLinks) == 0)
 | where (isnull(properties.securityPolicyLinks) or array_length(properties.securityPolicyLinks) == 0)
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True,
         "extra_col": "SKU/Size",
         "section": "NETWORKING",
@@ -282,7 +282,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.network/trafficmanagerprofiles'
 | where properties.endpoints == '[]' or array_length(properties.endpoints) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True,
         "extra_col": "",
         "section": "NETWORKING",
@@ -291,12 +291,14 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.network/virtualnetworks'
 | where isnull(properties.subnets) or array_length(properties.subnets) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": False,
         "extra_col": "",
         "section": "NETWORKING",
     },
     "Subnets without connected devices": {
+        # Subnets don't have their own resource IDs in Cost Management, so we
+        # project an empty id. They fall through to $0 cost (which is correct).
         "query": """Resources
 | where type =~ 'microsoft.network/virtualnetworks'
 | mv-expand subnet = properties.subnets
@@ -305,7 +307,7 @@ QUERIES = {
 | where (isnull(subnet.properties.privateEndpoints) or array_length(subnet.properties.privateEndpoints) == 0)
 | where (isnull(subnet.properties.delegations) or array_length(subnet.properties.delegations) == 0)
 | extend subnetName = tostring(subnet.name)
-| project name=subnetName, resourceGroup, location, subscriptionId, sku=name, tags""",
+| project id='', name=subnetName, resourceGroup, location, subscriptionId, sku=name, tags""",
         "cost": False,
         "extra_col": "VNet",
         "section": "NETWORKING",
@@ -315,7 +317,7 @@ QUERIES = {
 | where type =~ 'microsoft.network/ipgroups'
 | where (isnull(properties.firewalls) or array_length(properties.firewalls) == 0)
 | where (isnull(properties.firewallPolicies) or array_length(properties.firewallPolicies) == 0)
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": False,
         "extra_col": "",
         "section": "NETWORKING",
@@ -324,7 +326,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.network/privatednszones'
 | where properties.numberOfVirtualNetworkLinks == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": False,
         "extra_col": "",
         "section": "NETWORKING",
@@ -333,7 +335,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.network/ddosprotectionplans'
 | where isnull(properties.virtualNetworks) or properties.virtualNetworks == '[]' or array_length(properties.virtualNetworks) == 0
-| project name, resourceGroup, location, subscriptionId, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
         "cost": True,
         "extra_col": "",
         "section": "NETWORKING",
@@ -343,7 +345,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.compute/disks'
 | where properties.diskState =~ 'Unattached'
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": True,
         "extra_col": "SKU/Size",
         "section": "STORAGE",
@@ -353,7 +355,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.sql/servers/elasticpools'
 | where isnull(properties.perDatabaseSettings) or properties.numberOfDatabases == 0
-| project name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(sku.name), tags""",
         "cost": False,
         "extra_col": "SKU/Size",
         "section": "DATABASE",
@@ -363,7 +365,7 @@ QUERIES = {
         "query": """Resources
 | where type =~ 'microsoft.web/certificates'
 | where properties.expirationDate < now()
-| project name, resourceGroup, location, subscriptionId, sku=tostring(properties.expirationDate), tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=tostring(properties.expirationDate), tags""",
         "cost": False,
         "extra_col": "Expiry",
         "section": "OTHER",
@@ -375,7 +377,7 @@ QUERIES = {
 | where array_length(properties.statuses) > 0
 | extend connStatus = tostring(properties.statuses[0]['status'])
 | where connStatus !in~ ('Connected', 'Ready')
-| project name, resourceGroup, location, subscriptionId, sku=connStatus, tags""",
+| project id=tolower(id), name, resourceGroup, location, subscriptionId, sku=connStatus, tags""",
         "cost": False,
         "extra_col": "Status",
         "section": "OTHER",
@@ -416,10 +418,55 @@ COST_ESTIMATES = {
 
 
 # ── JSON / CSV output formatters ──────────────────────────────────────────────
-def _flatten_row(r: dict, category: str, cfg: dict, sub_names: dict, sub_envs: dict) -> dict:
-    """Flatten a resource row into a dict suitable for JSON/CSV export."""
+def _flatten_row(
+    r: dict,
+    category: str,
+    cfg: dict,
+    sub_names: dict,
+    sub_envs: dict,
+    cost_result=None,
+) -> dict:
+    """Flatten a resource row into a dict suitable for JSON/CSV export.
+
+    If `cost_result` (an EnrichmentResult) is supplied and contains real data
+    for this resource ID, those numbers take precedence over COST_ESTIMATES.
+    Falls back to the hardcoded per-category estimate when real data is
+    unavailable (e.g. resource too new to have billing history, CM query
+    failed for that subscription, or no Cost Management Reader RBAC).
+    """
     sub_id = r.get("subscriptionId", "")
+    resource_id = str(r.get("id", "") or "").lower()
     tags = r.get("tags") or {}
+
+    # Real cost lookup.
+    rolling30d = 0.0
+    last_billing_month = 0.0
+    currency = "USD"
+    cost_source = "estimate"
+
+    if cost_result is not None and resource_id:
+        rec = cost_result.get_cost(resource_id)
+        if rec is not None:
+            rolling30d = rec.rolling30d
+            last_billing_month = rec.last_billing_month
+            currency = rec.currency
+            cost_source = "costManagement"
+
+    # Fallback: per-category hardcoded estimate if no real data found.
+    estimate = float(COST_ESTIMATES.get(category, 0.0))
+    if cost_source == "estimate":
+        monthly_cost = estimate
+    else:
+        # Prefer rolling 30d as the "canonical monthly cost" — reflects the
+        # current rate of spend, not a stale prior invoice.
+        monthly_cost = rolling30d if rolling30d > 0 else last_billing_month
+        if monthly_cost <= 0:
+            # Real query returned $0 — likely a resource too new to have
+            # racked up billing yet. Fall back to the estimate so the CFO
+            # deck doesn't understate waste.
+            monthly_cost = estimate
+            cost_source = "estimate-zero-cm"
+
     return {
         "category": category,
         "section": cfg.get("section", "OTHER"),
@@ -428,39 +475,62 @@ def _flatten_row(r: dict, category: str, cfg: dict, sub_names: dict, sub_envs: d
         "location": r.get("location", ""),
         "subscription": sub_names.get(sub_id, sub_id),
         "subscriptionId": sub_id,
+        "resourceId": resource_id,
         "sku": r.get("sku", "") or "",
         "incursCost": cfg.get("cost", False),
-        "estimatedMonthlyCost": COST_ESTIMATES.get(category, 0.0),
+        "estimatedMonthlyCost": round(monthly_cost, 2),
+        "rolling30dCost": round(rolling30d, 2),
+        "lastBillingMonthCost": round(last_billing_month, 2),
+        "costCurrency": currency,
+        "costSource": cost_source,
         "environment": classify_resource(r, sub_envs),
         "tags": tags if isinstance(tags, dict) else {},
     }
 
 
-def _collect_flat_rows(category_results, sub_names, sub_envs):
+def _collect_flat_rows(category_results, sub_names, sub_envs, cost_result=None):
     """Build a flat list of all orphan rows for export."""
     rows = []
     for cat_name, cfg in QUERIES.items():
         for r in category_results.get(cat_name, []):
-            rows.append(_flatten_row(r, cat_name, cfg, sub_names, sub_envs))
+            rows.append(_flatten_row(r, cat_name, cfg, sub_names, sub_envs, cost_result))
     # Empty RGs
     for r in category_results.get("Empty Resource Groups", []):
         rows.append(_flatten_row(
             r, "Empty Resource Groups",
             {"cost": False, "section": "OTHER"},
-            sub_names, sub_envs,
+            sub_names, sub_envs, cost_result,
         ))
     return rows
 
 
-def export_json(rows: list[dict], filepath: str) -> str:
-    """Write orphan data to JSON."""
+def export_json(rows: list[dict], filepath: str, cost_result=None) -> str:
+    """Write orphan data to JSON, including per-row real costs and a
+    top-level block describing the Cost Management enrichment window."""
     total_cost = sum(r["estimatedMonthlyCost"] for r in rows)
-    output = {
+    total_rolling = sum(r.get("rolling30dCost", 0.0) for r in rows)
+    total_last_month = sum(r.get("lastBillingMonthCost", 0.0) for r in rows)
+
+    output: dict = {
         "scanDate": datetime.now(timezone.utc).isoformat(),
         "totalResources": len(rows),
         "estimatedMonthlyCost": round(total_cost, 2),
+        "totalRolling30dCost": round(total_rolling, 2),
+        "totalLastBillingMonthCost": round(total_last_month, 2),
         "resources": rows,
     }
+    if cost_result is not None:
+        output["costEnrichment"] = {
+            "generatedAt": cost_result.generated_at,
+            "rolling30dWindow": {
+                "from": cost_result.rolling30d_window[0],
+                "to": cost_result.rolling30d_window[1],
+            },
+            "subscriptionsQueried": cost_result.subscriptions_queried,
+            "subscriptionsFailed": cost_result.subscriptions_failed,
+            "totalRolling30d": round(cost_result.total_rolling30d, 2),
+            "totalLastBillingMonth": round(cost_result.total_last_billing_month, 2),
+        }
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, default=str)
     return filepath
@@ -470,15 +540,16 @@ def export_csv(rows: list[dict], filepath: str) -> str:
     """Write orphan data to CSV."""
     fieldnames = [
         "category", "section", "name", "resourceGroup", "location",
-        "subscription", "subscriptionId", "sku", "incursCost",
-        "estimatedMonthlyCost", "environment", "tags",
+        "subscription", "subscriptionId", "resourceId", "sku", "incursCost",
+        "estimatedMonthlyCost", "rolling30dCost", "lastBillingMonthCost",
+        "costCurrency", "costSource", "environment", "tags",
     ]
     with open(filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for r in rows:
-            row = dict(r)
-            row["tags"] = json.dumps(row["tags"])
+            row = {k: r.get(k, "") for k in fieldnames}
+            row["tags"] = json.dumps(row["tags"]) if row.get("tags") else "{}"
             writer.writerow(row)
     return filepath
 
@@ -888,6 +959,16 @@ def main():
     parser.add_argument("--format", "-f", choices=["console", "json", "csv", "html"],
                         default="console", help="Output format (default: console)")
     parser.add_argument("--output", "-o", help="Output file path (auto-generated if omitted)")
+    parser.add_argument("--no-cost-data", action="store_true",
+                        help="Skip Cost Management API enrichment and use hardcoded "
+                             "estimates only. Use this if the caller lacks the "
+                             "'Cost Management Reader' role.")
+    parser.add_argument("--cost-cache-dir", default=".",
+                        help="Directory for daily cost-cache-YYYYMMDD.json files "
+                             "(default: cwd)")
+    parser.add_argument("--refresh-cost-data", action="store_true",
+                        help="Force a fresh pull from Cost Management even if "
+                             "a same-day cache exists.")
     args = parser.parse_args()
 
     try:
@@ -975,14 +1056,59 @@ def main():
             print(f"  {RED}Empty RG query failed: {e}{RESET}")
             category_results["Empty Resource Groups"] = []
 
+    # ── Cost Management enrichment (real cost data) ──────────────────────
+    cost_result = None
+    if not args.no_cost_data:
+        try:
+            from azure_cost_enrichment import enrich_costs
+
+            # Collect the subscription IDs that actually turned up orphans —
+            # no point querying Cost Management for subs with zero waste.
+            subs_with_orphans = {
+                r.get("subscriptionId", "")
+                for rows in category_results.values()
+                for r in rows
+                if r.get("subscriptionId")
+            }
+            if subs_with_orphans:
+                print(f"{BOLD}Enriching with Cost Management data...{RESET}")
+                cost_result = enrich_costs(
+                    credential,
+                    sorted(subs_with_orphans),
+                    cache_dir=args.cost_cache_dir,
+                    use_cache=not args.refresh_cost_data,
+                )
+                window = cost_result.rolling30d_window
+                if window[0]:
+                    print(f"  Rolling 30d window: {window[0]} → {window[1]}")
+                print(
+                    f"  {len(cost_result.subscriptions_queried)} subscription(s) "
+                    f"queried, {len(cost_result.cost_map)} resource records, "
+                    f"${cost_result.total_rolling30d:,.2f} total rolling 30d spend"
+                )
+                if cost_result.subscriptions_failed:
+                    for sid, err in cost_result.subscriptions_failed.items():
+                        name = sub_names.get(sid, sid)
+                        print(f"  {YELLOW}⚠  {name}: {err}{RESET}")
+                print()
+        except ImportError:
+            print(f"  {YELLOW}azure_cost_enrichment module not available — "
+                  f"using hardcoded estimates.{RESET}")
+            cost_result = None
+        except Exception as e:
+            print(f"  {YELLOW}Cost enrichment failed ({e}) — "
+                  f"falling back to hardcoded estimates.{RESET}")
+            logger.warning(f"Cost enrichment failed: {e}")
+            cost_result = None
+
     # ── JSON / CSV / HTML export ─────────────────────────────────────────
     if args.format in ("json", "csv", "html"):
-        flat_rows = _collect_flat_rows(category_results, sub_names, sub_envs)
+        flat_rows = _collect_flat_rows(category_results, sub_names, sub_envs, cost_result)
         total_cost = sum(r["estimatedMonthlyCost"] for r in flat_rows)
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         if args.format == "json":
             path = args.output or f"orphan-report-{ts}.json"
-            export_json(flat_rows, path)
+            export_json(flat_rows, path, cost_result)
         elif args.format == "csv":
             path = args.output or f"orphan-report-{ts}.csv"
             export_csv(flat_rows, path)
@@ -991,6 +1117,10 @@ def main():
             export_html(flat_rows, path, sub_display)
         print(f"Exported {len(flat_rows)} resources to {BOLD}{path}{RESET}")
         print(f"Estimated monthly waste: {BOLD}${total_cost:,.2f}{RESET}")
+        if cost_result is not None:
+            real_count = sum(1 for r in flat_rows if r.get("costSource") == "costManagement")
+            print(f"  {GREEN}{real_count}{RESET} rows with real Cost Management data, "
+                  f"{len(flat_rows) - real_count} using fallback estimates")
         return
 
     # ── Print results grouped by environment ─────────────────────────────
@@ -1076,6 +1206,18 @@ def main():
     print(f"{BOLD}║{RESET}  {YELLOW}{'Dev / QA / UAT':<50s} {nonprod_orphans:>5}{RESET}     {BOLD}║{RESET}")
     print(f"{BOLD}╚══════════════════════════════════════════════════════════════════╝{RESET}")
     print()
+
+    # ── Monthly waste total (console path) ──────────────────────────────
+    if total_orphans > 0:
+        console_rows = _collect_flat_rows(category_results, sub_names, sub_envs, cost_result)
+        total_waste = sum(r["estimatedMonthlyCost"] for r in console_rows)
+        total_rolling = sum(r.get("rolling30dCost", 0.0) for r in console_rows)
+        print(f"{BOLD}Estimated monthly waste: {RED}${total_waste:,.2f}{RESET}")
+        if cost_result is not None and total_rolling > 0:
+            print(f"  Real Cost Management rolling 30d: {BOLD}${total_rolling:,.2f}{RESET}")
+            real_count = sum(1 for r in console_rows if r.get("costSource") == "costManagement")
+            print(f"  ({real_count} of {len(console_rows)} rows backed by Cost Management data)")
+        print()
 
     if total_orphans > 0:
         print(f"{BOLD}Cleanup commands:{RESET}")
