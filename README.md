@@ -25,10 +25,25 @@ Identify and clean up orphaned Azure resources across all subscriptions in your 
 | **Private DNS Zones** | — | No virtual network links |
 | **DDoS Protection Plans** | ✅ | No associated virtual networks |
 | **Managed Disks** | ✅ | Unattached (disk state = `Unattached`) |
-| **SQL Elastic Pools** | — | No databases |
+| **SQL Elastic Pools** | ✅ | No databases |
 | **Empty Resource Groups** | — | Zero resources inside |
 | **Expired Certificates** | — | App Service certs past expiration |
 | **API Connections** | — | Disconnected / not ready |
+| **Stopped VMs** † | ✅ | Stopped but NOT deallocated — still billing full compute |
+| **Deallocated VMs** † | ✅ | Compute free, but disks and reserved IPs still bill |
+| **VM Images** † | ✅ | Not used by any existing VM or VMSS |
+| **ExpressRoute Circuits** † | ✅ | Provider side never provisioned — full circuit fee for nothing |
+| **Bastion Hosts** † | ✅ | In VNets with no VMs (verify peering before acting) |
+| **Public IP Prefixes** † | ✅ | No IPs allocated from the prefix |
+| **Disk Snapshots** † | ✅ | Older than 90 days, or source disk deleted |
+| **Recovery Services Vaults** † | — | No backup or ASR protected items |
+| **Backup Items** † | ✅ | Protecting resources that no longer exist |
+| **AVD Application Groups** † | — | Not linked to any workspace |
+| **User-Assigned Managed Identities** † | — | Not attached to any resource (security hygiene) |
+
+† **Report-only categories** — `orphan_cleanup.py` will never delete these; they require human judgment (peering, backup policy, intentional dealloc).
+
+Any resource tagged `DoNotDelete` (as a tag key or value) is excluded from **all** reports and cleanup automatically.
 
 ## Quick Start
 
@@ -57,6 +72,15 @@ source .venv/bin/activate   # Linux/macOS
 # Install dependencies
 pip install -r requirements.txt
 ```
+
+## Tests (offline, no Azure needed)
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests/ -v
+```
+
+Everything Azure is mocked. The suite covers KQL regression guards (case-sensitive joins, `isnull()` on string columns, missing `todatetime()`), environment classification, the subscription-exclusion and `DoNotDelete` filters, export formats, Cost Management retry/throttle/cache behavior, and an end-to-end mocked scan. Live query semantics still need a real tenant — run a scan after `az login` to validate those.
 
 ## Usage
 

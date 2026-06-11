@@ -1,17 +1,17 @@
 # Virtual environment
 .venv/
+.venv-win/
 venv/
 env/
 
-# Generated reports (contain client data)
+# Generated reports and scan output (contain client data)
 *.xlsx
 *.csv
 *.json
 *.pptx
+*.log
 orphan-dashboard*.html
 orphan-report*.html
-orphan-cleanup.log
-orphan-report.log
 
 # Excel temp files
 ~$*
