@@ -1,0 +1,12 @@
+# This toolkit runs in Linux (Azure Cloud Shell). Force LF line endings on
+# checkout everywhere — a CRLF shebang makes run.sh fail with
+# "cannot execute: required file not found" on Linux.
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+
+# Binary artifacts — never normalize.
+*.xlsx binary
+*.pptx binary
+*.tar.gz binary
+*.zip binary
