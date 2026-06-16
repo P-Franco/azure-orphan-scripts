@@ -22,21 +22,31 @@ WARNING: --confirm will PERMANENTLY DELETE resources. Review dry-run output
 
 import argparse
 import logging
-import re
 import sys
 import time
 from datetime import datetime, timezone
 
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.resourcegraph import ResourceGraphClient
-from azure.mgmt.resourcegraph.models import QueryRequest, QueryRequestOptions
 from azure.mgmt.subscription import SubscriptionClient
 from azure.mgmt.resource import ResourceManagementClient
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.network import NetworkManagementClient
 from azure.mgmt.web import WebSiteManagementClient
 from azure.core.exceptions import HttpResponseError
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
+
+# Single source of truth for orphan queries, classification, and safety
+# filters is orphan_report.py — cleanup must never drift from what the
+# report shows. Categories without an entry in DELETION_ORDER below are
+# REPORT-ONLY and are never touched by this tool.
+from orphan_report import (
+    QUERIES,
+    classify_resource,
+    classify_subscription,
+    find_empty_rgs,
+    has_do_not_delete_tag,
+    run_query,
+)
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 BOLD = "\033[1m"
@@ -47,54 +57,6 @@ GREEN = "\033[32m"
 RESET = "\033[0m"
 
 
-# ── Environment classification ────────────────────────────────────────────
-NON_PROD_KEYWORDS = [
-    "dev", "development", "qa", "uat", "test", "staging", "sandbox",
-    "lab", "pilot", "poc", "nonprod", "non-prod", "nonprd", "non-prd",
-    "preprod", "pre-prod", "stg", "demo",
-]
-
-
-def classify_subscription(sub_name: str) -> str:
-    """Classify a subscription as PRODUCTION or NON-PRODUCTION based on name.
-    Subscriptions containing dev/qa/uat/test/staging keywords are non-production.
-    Everything else (including SharedServices) defaults to PRODUCTION.
-    """
-    name_lower = sub_name.lower()
-    for kw in NON_PROD_KEYWORDS:
-        if kw in name_lower:
-            return "NON-PRODUCTION"
-    return "PRODUCTION"
-
-
-_ENV_TAG_KEYS = {"environment", "env"}
-_NON_PROD_PATTERNS = [
-    re.compile(r"(?<![a-z])" + re.escape(kw) + r"(?![a-z])")
-    for kw in NON_PROD_KEYWORDS
-]
-
-
-def classify_resource(resource: dict, sub_envs: dict) -> str:
-    """Classify a resource using tags, naming conventions, then subscription fallback."""
-    tags = resource.get("tags") or {}
-    if isinstance(tags, dict):
-        for tk, tv in tags.items():
-            if tk.lower() in _ENV_TAG_KEYS:
-                val = str(tv).lower().strip()
-                for kw in NON_PROD_KEYWORDS:
-                    if kw in val:
-                        return "NON-PRODUCTION"
-                if any(p in val for p in ("prod", "prd")):
-                    return "PRODUCTION"
-    name_lower = resource.get("name", "").lower()
-    rg_lower = resource.get("resourceGroup", "").lower()
-    for pattern in _NON_PROD_PATTERNS:
-        if pattern.search(name_lower) or pattern.search(rg_lower):
-            return "NON-PRODUCTION"
-    sub_id = resource.get("subscriptionId", "")
-    return sub_envs.get(sub_id, "PRODUCTION")
-
-
 # ── Logging ──────────────────────────────────────────────────────────────────
 LOG_FILE = "orphan-cleanup.log"
 logger = logging.getLogger("orphan-cleanup")
@@ -103,80 +65,6 @@ fh = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
 fh.setFormatter(logging.Formatter("[%(asctime)s UTC] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
 fh.converter = time.gmtime
 logger.addHandler(fh)
-
-
-# ── Resource Graph helper ────────────────────────────────────────────────────
-@retry(
-    retry=retry_if_exception_type(HttpResponseError),
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    stop=stop_after_attempt(3),
-    reraise=True,
-)
-def run_query(
-    graph_client: ResourceGraphClient,
-    query: str,
-    *,
-    sub_ids: list[str] | None = None,
-    mgmt_group: str | None = None,
-) -> list[dict]:
-    """Run a Resource Graph query, handling pagination.
-    Scope by subscription IDs or management group (tenant root for tenant-wide).
-    Retries up to 3 times on transient Azure errors with exponential backoff.
-    """
-    results = []
-    options = QueryRequestOptions(result_format="objectArray")
-    kwargs = {"query": query, "options": options}
-    if mgmt_group:
-        kwargs["management_groups"] = [mgmt_group]
-    elif sub_ids:
-        kwargs["subscriptions"] = sub_ids
-    request = QueryRequest(**kwargs)
-    try:
-        response = graph_client.resources(request)
-        results.extend(response.data)
-
-        while response.skip_token:
-            options.skip_token = response.skip_token
-            response = graph_client.resources(request)
-            results.extend(response.data)
-    except HttpResponseError as e:
-        if e.status_code == 403:
-            logger.warning(f"Insufficient permissions for query: {e.message}")
-            return []
-        logger.error(f"Resource Graph query failed: {e.message}")
-        raise
-
-    return results
-
-
-# ── Empty Resource Groups (Resource Graph) ───────────────────────────────────
-def find_empty_rgs(graph_client: ResourceGraphClient, **query_kwargs) -> list[dict]:
-    """Find empty resource groups using 2 Resource Graph queries + set difference."""
-    all_rgs = run_query(
-        graph_client,
-        """ResourceContainers
-| where type =~ 'microsoft.resources/subscriptions/resourcegroups'
-| project name, resourceGroup=name, location, subscriptionId""",
-        **query_kwargs,
-    )
-
-    nonempty = run_query(
-        graph_client,
-        """Resources
-| summarize count() by resourceGroup, subscriptionId
-| project resourceGroup, subscriptionId""",
-        **query_kwargs,
-    )
-
-    occupied = {
-        (r["resourceGroup"].lower(), r["subscriptionId"].lower())
-        for r in nonempty
-    }
-
-    return [
-        rg for rg in all_rgs
-        if (rg["resourceGroup"].lower(), rg["subscriptionId"].lower()) not in occupied
-    ]
 
 
 # ── Deletion functions ───────────────────────────────────────────────────────
@@ -267,160 +155,63 @@ def _delete_rg(credential, r: dict) -> None:
 
 
 # ── Deletion categories in safe dependency order ─────────────────────────────
+# (display_name, QUERIES key, deleter_func) — query text comes from
+# orphan_report.QUERIES so report and cleanup always agree on what counts
+# as an orphan. Categories present in QUERIES but absent here (stopped or
+# deallocated VMs, ExpressRoute circuits, snapshots, backup items, Bastion,
+# IP prefixes, images, AVD app groups, managed identities) are REPORT-ONLY:
+# this tool will never delete them.
 DELETION_ORDER = [
-    # (category_name, query, deleter_func)
-    ("Private Endpoint", """Resources
-| where type =~ 'microsoft.network/privateendpoints'
-| where isnull(properties.privateLinkServiceConnections) or array_length(properties.privateLinkServiceConnections) == 0
-| where isnull(properties.manualPrivateLinkServiceConnections) or array_length(properties.manualPrivateLinkServiceConnections) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Private Endpoint", "Private Endpoints not connected to a resource",
      _delete_network_resource("private_endpoint")),
-
-    ("Application Gateway", """Resources
-| where type =~ 'microsoft.network/applicationgateways'
-| where properties.backendAddressPools == '[]' or array_length(properties.backendAddressPools) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Application Gateway", "Application Gateways with empty backend pools",
      _delete_network_resource("application_gateway")),
-
-    ("Load Balancer", """Resources
-| where type =~ 'microsoft.network/loadbalancers'
-| where properties.backendAddressPools == '[]' or array_length(properties.backendAddressPools) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Load Balancer", "Load Balancers with empty backend pools",
      _delete_network_resource("load_balancer")),
-
-    ("VNet Gateway", """Resources
-| where type =~ 'microsoft.network/virtualnetworkgateways'
-| join kind=leftouter (
-  Resources
-  | where type =~ 'microsoft.network/connections'
-  | mv-expand gw = pack_array(properties.virtualNetworkGateway1.id, properties.virtualNetworkGateway2.id)
-  | project connectionGwId=tolower(tostring(gw))
-) on $left.id == $right.connectionGwId
-| where isnull(connectionGwId)
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("VNet Gateway", "VNet Gateways with no connections",
      _delete_network_resource("vnet_gateway")),
-
-    ("NIC", """Resources
-| where type =~ 'microsoft.network/networkinterfaces'
-| where isnull(properties.virtualMachine) or properties.virtualMachine == ''
-| where isnull(properties.privateEndpoint) or properties.privateEndpoint == ''
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("NIC", "NICs not attached to a VM",
      _delete_network_resource("nic")),
-
-    ("Public IP", """Resources
-| where type =~ 'microsoft.network/publicipaddresses'
-| where properties.ipConfiguration == '' or isnull(properties.ipConfiguration)
-| where properties.natGateway == '' or isnull(properties.natGateway)
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Public IP", "Unassociated Public IPs",
      _delete_network_resource("public_ip")),
-
-    ("NSG", """Resources
-| where type =~ 'microsoft.network/networksecuritygroups'
-| where isnull(properties.networkInterfaces) or properties.networkInterfaces == '[]' or array_length(properties.networkInterfaces) == 0
-| where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("NSG", "NSGs not associated with subnet or NIC",
      _delete_network_resource("nsg")),
-
-    ("Route Table", """Resources
-| where type =~ 'microsoft.network/routetables'
-| where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Route Table", "Route Tables not associated with a subnet",
      _delete_network_resource("route_table")),
-
-    ("NAT Gateway", """Resources
-| where type =~ 'microsoft.network/natgateways'
-| where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("NAT Gateway", "NAT Gateways not associated with a subnet",
      _delete_network_resource("nat_gateway")),
-
-    ("Front Door WAF Policy", """Resources
-| where type =~ 'microsoft.network/frontdoorwebapplicationfirewallpolicies'
-| where (isnull(properties.frontendEndpointLinks) or array_length(properties.frontendEndpointLinks) == 0)
-| where (isnull(properties.securityPolicyLinks) or array_length(properties.securityPolicyLinks) == 0)
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Front Door WAF Policy", "Front Door WAF Policies not linked to a Front Door",
      _delete_generic),
-
-    ("Traffic Manager Profile", """Resources
-| where type =~ 'microsoft.network/trafficmanagerprofiles'
-| where properties.endpoints == '[]' or array_length(properties.endpoints) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Traffic Manager Profile", "Traffic Manager Profiles with no endpoints",
      _delete_generic),
-
-    ("IP Group", """Resources
-| where type =~ 'microsoft.network/ipgroups'
-| where (isnull(properties.firewalls) or array_length(properties.firewalls) == 0)
-| where (isnull(properties.firewallPolicies) or array_length(properties.firewallPolicies) == 0)
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("IP Group", "IP Groups not referenced by any firewall",
      _delete_network_resource("ip_group")),
-
-    ("DDoS Protection Plan", """Resources
-| where type =~ 'microsoft.network/ddosprotectionplans'
-| where isnull(properties.virtualNetworks) or properties.virtualNetworks == '[]' or array_length(properties.virtualNetworks) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("DDoS Protection Plan", "DDoS Protection Plans with no associated VNets",
      _delete_network_resource("ddos_protection_plan")),
-
-    ("Private DNS Zone", """Resources
-| where type =~ 'microsoft.network/privatednszones'
-| where properties.numberOfVirtualNetworkLinks == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Private DNS Zone", "Private DNS Zones with no VNet links",
      _delete_generic),
-
-    ("Subnet", """Resources
-| where type =~ 'microsoft.network/virtualnetworks'
-| mv-expand subnet = properties.subnets
-| where subnet.name !in~ ('GatewaySubnet', 'AzureFirewallSubnet', 'AzureFirewallManagementSubnet', 'AzureBastionSubnet', 'RouteServerSubnet')
-| where (isnull(subnet.properties.ipConfigurations) or array_length(subnet.properties.ipConfigurations) == 0)
-| where (isnull(subnet.properties.privateEndpoints) or array_length(subnet.properties.privateEndpoints) == 0)
-| where (isnull(subnet.properties.delegations) or array_length(subnet.properties.delegations) == 0)
-| extend subnetName = tostring(subnet.name)
-| project id=subnet.id, name=subnetName, resourceGroup, subscriptionId, location, vnetName=name""",
+    ("Subnet", "Subnets without connected devices",
      _delete_subnet),
-
-    ("Virtual Network", """Resources
-| where type =~ 'microsoft.network/virtualnetworks'
-| where isnull(properties.subnets) or array_length(properties.subnets) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Virtual Network", "Virtual Networks with no subnets",
      _delete_network_resource("virtual_network")),
-
-    ("Managed Disk", """Resources
-| where type =~ 'microsoft.compute/disks'
-| where properties.diskState =~ 'Unattached'
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Managed Disk", "Unattached Managed Disks",
      _delete_disk),
-
-    ("Availability Set", """Resources
-| where type =~ 'microsoft.compute/availabilitysets'
-| where properties.virtualMachines == '[]' or array_length(properties.virtualMachines) == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Availability Set", "Availability Sets with no VMs",
      _delete_availability_set),
-
-    ("App Service Plan", """Resources
-| where type =~ 'microsoft.web/serverfarms'
-| where properties.numberOfSites == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("App Service Plan", "App Service Plans with no apps",
      _delete_app_service_plan),
-
-    ("SQL Elastic Pool", """Resources
-| where type =~ 'microsoft.sql/servers/elasticpools'
-| where isnull(properties.perDatabaseSettings) or properties.numberOfDatabases == 0
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("SQL Elastic Pool", "SQL Elastic Pools with no databases",
      _delete_generic),
-
-    ("Expired Certificate", """Resources
-| where type =~ 'microsoft.web/certificates'
-| where properties.expirationDate < now()
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("Expired Certificate", "Expired App Service Certificates",
      _delete_generic),
-
-    ("API Connection", """Resources
-| where type =~ 'microsoft.web/connections'
-| where isnotnull(properties.statuses)
-| where array_length(properties.statuses) > 0
-| extend connStatus = tostring(properties.statuses[0]['status'])
-| where connStatus !in~ ('Connected', 'Ready')
-| project id, name, resourceGroup, subscriptionId, location""",
+    ("API Connection", "Disconnected API Connections",
      _delete_generic),
 ]
+
+# Sanity check at import time: every cleanup category must exist in QUERIES.
+for _disp, _key, _ in DELETION_ORDER:
+    if _key not in QUERIES:
+        raise KeyError(f"DELETION_ORDER references unknown category: {_key!r}")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -519,16 +310,37 @@ def main():
     skipped = 0
 
     # ── Process each category in dependency order ────────────────────────────
+    report_only = [c for c in QUERIES if c not in {k for _, k, _ in DELETION_ORDER}]
+    if report_only:
+        print(f"{YELLOW}{len(report_only)} categories are report-only and will "
+              f"never be deleted by this tool (run orphan_report.py to see them).{RESET}")
+        print()
+
     print(f"{BOLD}Processing deletions in safe dependency order...{RESET}")
     print()
 
-    for category, query, deleter in DELETION_ORDER:
+    for category, query_key, deleter in DELETION_ORDER:
+        query = QUERIES[query_key]["query"]
         try:
             resources = run_query(graph_client, query, **query_kwargs)
         except Exception as e:
             print(f"  {RED}Query failed for {category}: {e}{RESET}")
             logger.info(f"[QUERY-FAILED] {category}: {e}")
             continue
+
+        # Excluded subscriptions: tenant-wide scans scope by management
+        # group, so excluded subs still come back — drop them HERE, before
+        # anything can be deleted from them.
+        if excluded:
+            resources = [r for r in resources
+                         if r.get("subscriptionId") not in excluded]
+
+        # Honor the DoNotDelete tag across every category.
+        dnd_count = sum(1 for r in resources if has_do_not_delete_tag(r))
+        if dnd_count:
+            print(f"  {YELLOW}({dnd_count} {category} resource(s) skipped — DoNotDelete tag){RESET}")
+            logger.info(f"[SKIPPED-DND] {category}: {dnd_count} tagged DoNotDelete")
+            resources = [r for r in resources if not has_do_not_delete_tag(r)]
 
         # Filter by environment if --production-only
         nonprod_skipped = 0
@@ -581,6 +393,16 @@ def main():
 
     # ── Empty Resource Groups (last) ─────────────────────────────────────────
     empty_rgs = find_empty_rgs(graph_client, **query_kwargs)
+
+    # Same safety filters as the category loop.
+    if excluded:
+        empty_rgs = [r for r in empty_rgs
+                     if r.get("subscriptionId") not in excluded]
+    rg_dnd = sum(1 for r in empty_rgs if has_do_not_delete_tag(r))
+    if rg_dnd:
+        print(f"  {YELLOW}({rg_dnd} resource group(s) skipped — DoNotDelete tag){RESET}")
+        logger.info(f"[SKIPPED-DND] Empty Resource Groups: {rg_dnd}")
+        empty_rgs = [r for r in empty_rgs if not has_do_not_delete_tag(r)]
 
     # Filter by environment if --production-only
     rg_nonprod_skipped = 0
