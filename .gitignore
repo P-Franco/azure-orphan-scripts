@@ -12,6 +12,8 @@ env/
 *.log
 orphan-dashboard*.html
 orphan-report*.html
+_runs/
+vm-backup-gap-analysis-*/
 
 # Excel temp files
 ~$*
