@@ -164,6 +164,11 @@ def write_detail_sheet(ws, title, rows_by_category, sub_names, sub_envs, env_fil
 def main():
     parser = argparse.ArgumentParser(description="Generate Excel report of orphaned Azure resources")
     parser.add_argument("--subscription", "-s", help="Scope to a single subscription ID")
+    parser.add_argument("--tenant", "-t",
+                        help="Tenant ID (root management group) to scan. REQUIRED when "
+                             "the signed-in account spans multiple tenants — otherwise the "
+                             "scan silently targets whichever tenant Azure lists first. "
+                             "Ignored when --subscription is given.")
     parser.add_argument("--exclude-subscriptions", nargs="+", default=[],
                         help="Subscription IDs to exclude from scanning")
     parser.add_argument("--output", "-o", default="azure-orphan-report.xlsx",
@@ -195,12 +200,34 @@ def main():
         query_kwargs["sub_ids"] = [args.subscription]
         sub_names = {args.subscription: args.subscription}
     else:
-        first_tenant = next(sub_client.tenants.list(), None)
-        if first_tenant is None:
+        # When --tenant is given, scope to it explicitly — never trust the
+        # first tenant Azure happens to list (a multi-tenant account would
+        # otherwise scan the wrong client).
+        # Require an explicit --tenant whenever the signed-in account can see
+        # more than one tenant. Never guess — a multi-client login would
+        # otherwise risk scanning the wrong customer.
+        visible_tenants = [t.tenant_id for t in sub_client.tenants.list()]
+        if args.tenant:
+            tenant_id = args.tenant
+            if visible_tenants and tenant_id not in visible_tenants:
+                print(f"Refusing to scan: --tenant {tenant_id} is not the tenant "
+                      f"this login can reach ({', '.join(visible_tenants)}). "
+                      f"Run 'az login' / 'az account set' into {tenant_id} first.")
+                sys.exit(1)
+        elif len(visible_tenants) == 1:
+            tenant_id = visible_tenants[0]
+        elif not visible_tenants:
             print("No tenants found.")
             sys.exit(1)
-        tenant_id = first_tenant.tenant_id
+        else:
+            print(f"This login can reach {len(visible_tenants)} tenants. "
+                  f"Refusing to guess which one to scan — pass --tenant <id> "
+                  f"(or --subscription <id> for a single sub):")
+            for t in visible_tenants:
+                print(f"    {t}")
+            sys.exit(1)
         query_kwargs["mgmt_group"] = tenant_id
+        print(f"Scanning tenant {tenant_id}")
         all_subs = run_query(
             graph_client,
             """ResourceContainers
