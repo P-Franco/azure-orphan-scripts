@@ -1225,6 +1225,11 @@ def find_empty_rgs(graph_client: ResourceGraphClient, **query_kwargs) -> list[di
 def main():
     parser = argparse.ArgumentParser(description="Azure Orphaned Resources Report")
     parser.add_argument("--subscription", "-s", help="Scope to a single subscription ID")
+    parser.add_argument("--tenant", "-t",
+                        help="Tenant ID (root management group) to scan. REQUIRED when "
+                             "the signed-in account spans multiple tenants — otherwise the "
+                             "scan silently targets whichever tenant Azure lists first. "
+                             "Ignored when --subscription is given.")
     parser.add_argument("--exclude-subscriptions", nargs="+", default=[],
                         help="Subscription IDs to exclude from scanning")
     parser.add_argument("--format", "-f", choices=["console", "json", "csv", "html"],
@@ -1261,13 +1266,35 @@ def main():
         sub_names = {args.subscription: args.subscription}
         sub_display = f"1 subscription ({args.subscription})"
     else:
-        # Use tenant root management group for full tenant coverage
-        first_tenant = next(sub_client.tenants.list(), None)
-        if first_tenant is None:
+        # Use tenant root management group for full tenant coverage.
+        # When --tenant is given, scope to it explicitly — never trust the
+        # first tenant Azure happens to list (a multi-tenant account would
+        # otherwise scan the wrong client).
+        # Require an explicit --tenant whenever the signed-in account can see
+        # more than one tenant. Never guess — a multi-client login would
+        # otherwise risk scanning the wrong customer.
+        visible_tenants = [t.tenant_id for t in sub_client.tenants.list()]
+        if args.tenant:
+            tenant_id = args.tenant
+            if visible_tenants and tenant_id not in visible_tenants:
+                print(f"{RED}Refusing to scan: --tenant {tenant_id} is not the "
+                      f"tenant this login can reach ({', '.join(visible_tenants)}). "
+                      f"Run 'az login' / 'az account set' into {tenant_id} first.{RESET}")
+                return 1
+        elif len(visible_tenants) == 1:
+            tenant_id = visible_tenants[0]
+        elif not visible_tenants:
             print(f"{RED}No tenants found.{RESET}")
             return 1
-        tenant_id = first_tenant.tenant_id
+        else:
+            print(f"{RED}This login can reach {len(visible_tenants)} tenants. "
+                  f"Refusing to guess which one to scan — pass --tenant <id> "
+                  f"(or --subscription <id> for a single sub).{RESET}")
+            for t in visible_tenants:
+                print(f"    {t}")
+            return 1
         query_kwargs["mgmt_group"] = tenant_id
+        print(f"{BOLD}Scanning tenant {tenant_id}{RESET}")
 
         # Discover all enabled subscriptions via Resource Graph for display names
         all_subs = run_query(
