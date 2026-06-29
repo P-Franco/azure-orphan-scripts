@@ -56,6 +56,18 @@ HEALTHY_LBS = {"Completed", "CompletedWithWarnings"}
 
 WARNINGS = []                 # collected az failures (strings); never fatal
 
+# -- Branding (AHEAD client deliverable) ---------------------------------------
+# AHEAD's brand is blue on white. BRAND_DARK / BRAND_ACCENT are professional
+# blues - drop in the exact brand hex (or a logo) to finalize.
+# 8-char ARGB (FF = opaque) so Excel never renders these washed out.
+BRAND_FONT = "Calibri"
+BRAND_DARK = "FF1F4E79"       # AHEAD deep blue - header bands + wordmark
+BRAND_ACCENT = "FF4A90D9"     # AHEAD bright blue accent (approximate - confirm exact hex)
+BRAND_LIGHT = "FFF4F4F4"      # zebra stripe
+STATUS_BAD = "FFC00000"
+STATUS_WARN = "FFBF8F00"
+STATUS_GOOD = "FF375623"
+
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -560,78 +572,154 @@ def write_summary(out, ts, tenant, scope_desc, vms, vault_results, rec):
 # Excel workbook (optional - needs openpyxl)
 # ---------------------------------------------------------------------------
 
-def write_excel(out, ts, tenant, scope_desc, vault_results, rec, headline):
+def write_excel(out, ts, tenant, scope_desc, vault_results, rec, headline, client=""):
     try:
         from openpyxl import Workbook
-        from openpyxl.styles import Font, PatternFill, Alignment
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
         from openpyxl.utils import get_column_letter
     except ImportError:
         log("[!] openpyxl not installed - skipping .xlsx (CSVs still written). "
             "pip install openpyxl to enable.")
         return None
 
-    HFONT = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
-    HFILL = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
-    TITLE = Font(name="Calibri", bold=True, color="1F4E79", size=14)
-    BAD = Font(name="Calibri", color="C00000", bold=True)
+    WHITE, GREY = "FFFFFFFF", "FF595959"
+    hdr_font = Font(name=BRAND_FONT, bold=True, color=WHITE, size=11)
+    hdr_fill = PatternFill("solid", fgColor=BRAND_DARK)
+    zebra = PatternFill("solid", fgColor=BRAND_LIGHT)
+    accent = PatternFill("solid", fgColor=BRAND_ACCENT)
+    bad = Font(name=BRAND_FONT, color=STATUS_BAD, bold=True)
+    warn = Font(name=BRAND_FONT, color=STATUS_WARN, bold=True)
+    good = Font(name=BRAND_FONT, color=STATUS_GOOD, bold=True)
+    border = Border(bottom=Side(style="thin", color="FFD9D9D9"))
+    BULLET = chr(8226)
 
     wb = Workbook()
+    footer_text = "AHEAD Confidential" + (f"   -   Prepared for {client}" if client else "")
+    date_str = f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]}" if len(ts) >= 8 else ts
 
-    def sheet(title, header, rows, highlight_col=None):
+    def style_footer(ws):
+        ws.oddFooter.left.text = footer_text
+        ws.oddFooter.right.text = "Page &P of &N"
+
+    def bucket_font(v):
+        return {"Protected": good, "Missing": bad, "JobIssue": warn}.get(v)
+
+    def days_font(v):
+        if v == "never":
+            return bad
+        return bad if isinstance(v, int) and v > STALE_DAYS else None
+
+    def finding_font(v):
+        s = str(v)
+        return {"FINDING": bad, "REVIEW": warn, "OK": good}.get(s.split(":")[0].split(" ")[0])
+
+    def data_sheet(title, header, rows, color_rules=None):
         ws = wb.create_sheet(title[:31])
         for c, h in enumerate(header, 1):
             cell = ws.cell(row=1, column=c, value=h)
-            cell.font = HFONT
-            cell.fill = HFILL
-            cell.alignment = Alignment(horizontal="left")
+            cell.font, cell.fill = hdr_font, hdr_fill
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[1].height = 20
         for r, row in enumerate(rows, 2):
             for c, val in enumerate(row, 1):
-                ws.cell(row=r, column=c, value=val)
-            if highlight_col is not None:
-                v = row[highlight_col]
-                if isinstance(v, int) and v > STALE_DAYS or v == "never":
-                    ws.cell(row=r, column=highlight_col + 1).font = BAD
+                cell = ws.cell(row=r, column=c, value=val)
+                cell.border = border
+                if r % 2 == 0:
+                    cell.fill = zebra
+            for idx, fn in (color_rules or {}).items():
+                f = fn(row[idx])
+                if f:
+                    ws.cell(row=r, column=idx + 1).font = f
         ws.freeze_panes = "A2"
         if rows:
             ws.auto_filter.ref = f"A1:{get_column_letter(len(header))}{len(rows) + 1}"
         for col in ws.columns:
-            width = max((len(str(c.value)) for c in col if c.value is not None), default=8)
-            ws.column_dimensions[get_column_letter(col[0].column)].width = min(width + 3, 60)
+            w = max((len(str(c.value)) for c in col if c.value is not None), default=8)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = min(w + 3, 60)
+        style_footer(ws)
         return ws
 
-    # Summary sheet
+    # ---- Cover / Summary ----
     sm = wb.active
     sm.title = "Summary"
-    sm["A1"] = "VM Backup Gap Analysis"
-    sm["A1"].font = TITLE
-    meta = [("Run", ts), ("Tenant", tenant), ("Scope", scope_desc), ("", "")]
-    rows = meta + [
-        ("Total VMs in scope", headline["total"]),
-        ("Protected (healthy)", headline["protected"]),
-        ("Missing backup assignment", headline["missing"]),
-        ("Job issues / silent failures", headline["jobIssues"]),
-        ("Orphan vault items", headline["orphans"]),
-        (f"Protected-but-stale (RP > {STALE_DAYS}d)", headline["stale"]),
-        ("Backup coverage %", headline["coverage"]),
-        ("Recovery Services vaults", headline["vaults"]),
-        ("Access warnings", headline["warnings"]),
-    ]
-    for i, (k, v) in enumerate(rows, 3):
-        sm.cell(row=i, column=1, value=k).font = Font(bold=bool(k) and i >= 7)
-        sm.cell(row=i, column=2, value=v)
-    sm.column_dimensions["A"].width = 34
-    sm.column_dimensions["B"].width = 48
+    sm.sheet_view.showGridLines = False
+    sm.column_dimensions["A"].width = 3
+    sm.column_dimensions["B"].width = 46
+    sm.column_dimensions["C"].width = 16
+    sm.column_dimensions["D"].width = 34
+    style_footer(sm)
 
+    sm["B2"] = "AHEAD"
+    sm["B2"].font = Font(name=BRAND_FONT, bold=True, size=30, color=BRAND_DARK)
+    for col in ("B", "C", "D"):
+        sm[f"{col}3"].fill = accent
+    sm.row_dimensions[3].height = 6
+    sm["B5"] = "Azure VM Backup Gap Analysis"
+    sm["B5"].font = Font(name=BRAND_FONT, bold=True, size=16, color=BRAND_DARK)
+    if client:
+        sm["B6"] = f"Prepared for {client}"
+        sm["B6"].font = Font(name=BRAND_FONT, size=11, italic=True, color=GREY)
+
+    r = 8
+    for label, val in [("Report date", date_str), ("Azure tenant", tenant),
+                       ("Scope", scope_desc), ("Prepared by", "AHEAD")]:
+        sm.cell(row=r, column=2, value=label).font = Font(name=BRAND_FONT, bold=True, size=10, color=GREY)
+        sm.cell(row=r, column=3, value=val).font = Font(name=BRAND_FONT, size=10)
+        r += 1
+
+    r += 1
+    sm.cell(row=r, column=2, value="Findings").font = Font(name=BRAND_FONT, bold=True, size=13, color=BRAND_DARK)
+    r += 1
+    cov = headline["coverage"]
+    metrics = [
+        ("Total VMs in scope", headline["total"], None),
+        ("Protected (healthy)", headline["protected"], good),
+        ("Missing backup assignment", headline["missing"], bad if headline["missing"] else good),
+        ("Silent failures (look protected, aren't)", headline["jobIssues"], bad if headline["jobIssues"] else good),
+        ("Orphan vault items (no live VM)", headline["orphans"], warn if headline["orphans"] else good),
+        (f"Protected but stale (RP > {STALE_DAYS}d)", headline["stale"], bad if headline["stale"] else good),
+        ("Backup coverage", f"{cov}%", good if cov >= 90 else (warn if cov >= 75 else bad)),
+    ]
+    for label, val, fnt in metrics:
+        lc = sm.cell(row=r, column=2, value=label)
+        lc.font, lc.border = Font(name=BRAND_FONT, size=11), border
+        vc = sm.cell(row=r, column=3, value=val)
+        vc.font = fnt or Font(name=BRAND_FONT, bold=True, size=11)
+        vc.border = border
+        r += 1
+
+    # Top findings (auto-generated from the numbers)
+    r += 1
+    sm.cell(row=r, column=2, value="Top findings").font = Font(name=BRAND_FONT, bold=True, size=13, color=BRAND_DARK)
+    r += 1
+    lines = []
+    if rec["job_issues"]:
+        worst = max(rec["job_issues"], key=lambda v: (v["_item"].get("daysSinceLastSuccess") or 0))
+        lines.append(f"{worst['name']} appears protected but has had no successful backup in "
+                     f"{worst['_item'].get('daysSinceLastSuccess')} days.")
+    lines.append(f"{headline['missing']} of {headline['total']} VMs have no backup assignment "
+                 f"({cov}% coverage).")
+    pg = [v for v in (rec["missing"] + rec["job_issues"]) if v.get("_pairGap") == "Yes"]
+    if pg:
+        lines.append(f"{len(pg)} secondary nodes are unprotected while their primary is backed up - "
+                     "points to per-VM assignment rather than policy enforcement.")
+    if headline["orphans"]:
+        lines.append(f"{headline['orphans']} orphaned backup items remain for VMs that no longer exist.")
+    for ln in lines:
+        sm.cell(row=r, column=2, value=f"{BULLET}  {ln}").font = Font(name=BRAND_FONT, size=10, color="FF404040")
+        r += 1
+
+    # ---- Data sheets ----
     tables = build_tables(rec)
-    sheet("Missing Backup", *tables["missing-backup.csv"])
-    sheet("Silent Failures", *tables["job-health.csv"], highlight_col=7)   # daysSinceLastSuccess
-    sheet("Stale Protected", *tables["stale-protected.csv"], highlight_col=2)
-    sheet("Pair Gaps", ["vmName", "pairGap", "pairPrimary", "subscriptionName"],
-          [[vm.get("name", ""), "Yes", vm.get("_pairPrimary", ""), vm.get("subscriptionName", "")]
-           for vm in (rec["missing"] + rec["job_issues"]) if vm.get("_pairGap") == "Yes"])
-    sheet("Orphans", *tables["orphans.csv"])
-    sheet("Vaults", *vaults_table(vault_results))
-    sheet("Full Inventory", *tables["inventory.csv"])
+    data_sheet("Missing Backup", *tables["missing-backup.csv"])
+    data_sheet("Silent Failures", *tables["job-health.csv"], color_rules={7: days_font})
+    data_sheet("Stale Protected", *tables["stale-protected.csv"], color_rules={2: days_font})
+    data_sheet("Pair Gaps", ["vmName", "pairGap", "pairPrimary", "subscriptionName"],
+               [[vm.get("name", ""), "Yes", vm.get("_pairPrimary", ""), vm.get("subscriptionName", "")]
+                for vm in (rec["missing"] + rec["job_issues"]) if vm.get("_pairGap") == "Yes"])
+    data_sheet("Orphans", *tables["orphans.csv"])
+    data_sheet("Vaults", *vaults_table(vault_results), color_rules={5: finding_font})
+    data_sheet("Full Inventory", *tables["inventory.csv"], color_rules={8: bucket_font})
 
     path = os.path.join(out, "vm-backup-gap-analysis.xlsx")
     wb.save(path)
@@ -648,6 +736,7 @@ def main():
     ap.add_argument("-t", "--tenant", default="", help="tenant id (default: logged-in tenant)")
     ap.add_argument("-s", "--subscription", default="", help="limit to one subscription (name or id)")
     ap.add_argument("-o", "--output-dir", default=".", help="base output dir")
+    ap.add_argument("--client", default="", help="client name for the report cover (e.g. 'Old Republic')")
     ap.add_argument("--workers", type=int, default=12, help="parallel vault fetches (default 12)")
     ap.add_argument("--stale-days", type=int, default=STALE_DAYS,
                     help=f"flag protected VMs whose newest recovery point is older than this (default {STALE_DAYS})")
@@ -725,7 +814,7 @@ def main():
         write_csv(out, name, header, rows)
     write_csv(out, "vaults.csv", *vaults_table(vault_results))
     headline = write_summary(out, ts, target_tenant, scope_desc, vms, vault_results, rec)
-    xlsx = write_excel(out, ts, target_tenant, scope_desc, vault_results, rec, headline)
+    xlsx = write_excel(out, ts, target_tenant, scope_desc, vault_results, rec, headline, client=args.client)
 
     print(json.dumps(headline))
     section("Done")
