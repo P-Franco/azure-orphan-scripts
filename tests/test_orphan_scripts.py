@@ -540,3 +540,90 @@ def test_excel_uses_shared_queries():
     import generate_excel_report
     assert generate_excel_report.QUERIES is QUERIES
     assert generate_excel_report.COST_ESTIMATES is COST_ESTIMATES
+
+
+# ── Targeted cleanup by resource ID (orphan_cleanup.py) ───────────────────────
+import orphan_cleanup as oc  # noqa: E402
+
+
+def test_parse_resource_id_proper_case():
+    rid = "/subscriptions/SUB/resourceGroups/RG/providers/Microsoft.Network/privateEndpoints/pe1"
+    r = oc.parse_resource_id(rid)
+    assert r["subscriptionId"] == "SUB"
+    assert r["resourceGroup"] == "RG"
+    assert r["name"] == "pe1"
+    assert r["type"] == "microsoft.network/privateendpoints"
+
+
+def test_parse_resource_id_lowercased():
+    # Resource Graph returns id=tolower(id); the parser must still work.
+    rid = "/subscriptions/sub/resourcegroups/rg/providers/microsoft.network/publicipaddresses/ip1"
+    r = oc.parse_resource_id(rid)
+    assert r["type"] == "microsoft.network/publicipaddresses"
+    assert r["name"] == "ip1"
+
+
+@pytest.mark.parametrize("bad", ["not-an-id", "/foo/bar", "/subscriptions/x", ""])
+def test_parse_resource_id_malformed(bad):
+    with pytest.raises(ValueError):
+        oc.parse_resource_id(bad)
+
+
+def test_read_ids_file(tmp_path):
+    p = tmp_path / "ids.txt"
+    p.write_text(
+        "# header comment\n"
+        "\n"
+        "/subscriptions/a/resourceGroups/b/providers/x/y/z   # inline comment\n"
+        "   \n"
+        "/subscriptions/c/resourceGroups/d/providers/x/y/w\n",
+        encoding="utf-8",
+    )
+    assert oc.read_ids_file(str(p)) == [
+        "/subscriptions/a/resourceGroups/b/providers/x/y/z",
+        "/subscriptions/c/resourceGroups/d/providers/x/y/w",
+    ]
+
+
+def test_delete_targeted_dispatch(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(oc, "_ARM_TYPE_DELETERS", {
+        "microsoft.network/privateendpoints": lambda cred, r: calls.setdefault("net", r),
+    })
+    monkeypatch.setattr(oc, "delete_by_resource_id",
+                        lambda cred, rid: calls.setdefault("generic", rid))
+
+    pe = oc.parse_resource_id(
+        "/subscriptions/s/resourceGroups/g/providers/Microsoft.Network/privateEndpoints/pe")
+    oc.delete_targeted(None, pe)
+    assert calls.get("net") is pe and "generic" not in calls
+
+    other = oc.parse_resource_id(
+        "/subscriptions/s/resourceGroups/g/providers/Microsoft.Foo/bars/b")
+    oc.delete_targeted(None, other)
+    assert calls.get("generic") == other["id"]
+
+
+def test_targeted_cleanup_refuses_out_of_scope(monkeypatch, tmp_path):
+    # An ID whose subscription is NOT in the tenant's sub set must be refused,
+    # never deleted, even on --confirm.
+    p = tmp_path / "ids.txt"
+    p.write_text(
+        "/subscriptions/IN/resourceGroups/g/providers/Microsoft.Network/publicIPAddresses/keep\n"
+        "/subscriptions/OUT/resourceGroups/g/providers/Microsoft.Network/publicIPAddresses/foreign\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(oc, "run_query",
+                        lambda *a, **k: [{"id": "/subscriptions/in/resourcegroups/g/providers/microsoft.network/publicipaddresses/keep"}])
+    deleted = []
+    monkeypatch.setattr(oc, "delete_targeted", lambda cred, r: deleted.append(r["id"]))
+
+    rc = oc.run_targeted_cleanup(
+        credential=None, graph_client=None, ids_file=str(p),
+        sub_names={"IN": "in-sub"}, sub_envs={"IN": "PRODUCTION"},
+        dry_run=False, query_kwargs={},
+    )
+    # foreign sub never deleted; only the in-scope, still-existing one acted on
+    assert all("OUT" not in d for d in deleted)
+    assert deleted == ["/subscriptions/IN/resourceGroups/g/providers/Microsoft.Network/publicIPAddresses/keep"]
+    assert rc == 0

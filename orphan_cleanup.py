@@ -154,6 +154,167 @@ def _delete_rg(credential, r: dict) -> None:
     delete_resource_group(credential, r["name"], r["subscriptionId"])
 
 
+# ── Targeted deletion by explicit resource ID ─────────────────────────────────
+# Maps an ARM resource type to a type-specific deleter so a raw resource ID can
+# be dispatched to the SDK client with the correct API version. Anything not
+# mapped falls back to a generic ID delete.
+_ARM_TYPE_DELETERS = {
+    "microsoft.network/privateendpoints": _delete_network_resource("private_endpoint"),
+    "microsoft.network/publicipaddresses": _delete_network_resource("public_ip"),
+    "microsoft.network/networkinterfaces": _delete_network_resource("nic"),
+    "microsoft.network/networksecuritygroups": _delete_network_resource("nsg"),
+    "microsoft.network/loadbalancers": _delete_network_resource("load_balancer"),
+    "microsoft.network/applicationgateways": _delete_network_resource("application_gateway"),
+    "microsoft.network/virtualnetworkgateways": _delete_network_resource("vnet_gateway"),
+    "microsoft.network/routetables": _delete_network_resource("route_table"),
+    "microsoft.network/natgateways": _delete_network_resource("nat_gateway"),
+    "microsoft.network/ipgroups": _delete_network_resource("ip_group"),
+    "microsoft.network/ddosprotectionplans": _delete_network_resource("ddos_protection_plan"),
+    "microsoft.network/virtualnetworks": _delete_network_resource("virtual_network"),
+    "microsoft.compute/disks": _delete_disk,
+}
+
+
+def parse_resource_id(resource_id: str) -> dict:
+    """Parse a top-level ARM resource ID into
+    {id, subscriptionId, resourceGroup, name, type}. Case-insensitive on the
+    structural segments. Raises ValueError on a malformed ID."""
+    parts = [p for p in resource_id.strip().split("/") if p]
+    lower = [p.lower() for p in parts]
+    try:
+        sub = parts[lower.index("subscriptions") + 1]
+        rg = parts[lower.index("resourcegroups") + 1]
+        pi = lower.index("providers")
+        arm_type = f"{parts[pi + 1]}/{parts[pi + 2]}".lower()
+        name = parts[-1]
+    except (ValueError, IndexError):
+        raise ValueError(f"not a well-formed resource ID: {resource_id!r}")
+    return {"id": resource_id, "subscriptionId": sub, "resourceGroup": rg,
+            "name": name, "type": arm_type}
+
+
+def delete_targeted(credential, r: dict) -> None:
+    """Delete one parsed resource via its type-specific deleter, or a generic
+    ID delete if the type isn't mapped."""
+    deleter = _ARM_TYPE_DELETERS.get(r["type"])
+    if deleter is not None:
+        deleter(credential, r)
+    else:
+        delete_by_resource_id(credential, r["id"])
+
+
+def read_ids_file(path: str) -> list[str]:
+    """Read resource IDs from a file: one per line, blank lines and #-comments
+    ignored, inline trailing comments stripped."""
+    ids = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.split("#", 1)[0].strip()
+            if line:
+                ids.append(line)
+    return ids
+
+
+def run_targeted_cleanup(credential, graph_client, ids_file, sub_names, sub_envs,
+                         dry_run, query_kwargs):
+    """Delete EXACTLY the resource IDs in ids_file — no category re-scan.
+    Verifies each ID's subscription is in the chosen tenant, checks live
+    existence via Resource Graph (already-deleted resources are skipped, not
+    errored), and honors dry-run. Returns a process exit code."""
+    raw_ids = read_ids_file(ids_file)
+    if not raw_ids:
+        print(f"{RED}No resource IDs found in {ids_file}.{RESET}")
+        return 1
+
+    in_scope, out_of_scope, malformed = [], [], []
+    for rid in raw_ids:
+        try:
+            r = parse_resource_id(rid)
+        except ValueError:
+            malformed.append(rid)
+            continue
+        (in_scope if r["subscriptionId"] in sub_names else out_of_scope).append(r)
+
+    print()
+    print(f"{BOLD}Targeted cleanup from {ids_file}{RESET}")
+    print(f"  {len(raw_ids)} listed: {len(in_scope)} in-scope, "
+          f"{len(out_of_scope)} out-of-scope, {len(malformed)} malformed")
+    for rid in malformed:
+        print(f"  {YELLOW}skip (malformed): {rid}{RESET}")
+    for r in out_of_scope:
+        print(f"  {RED}REFUSE (sub {r['subscriptionId']} not in this tenant): {r['name']}{RESET}")
+        logger.info(f"[REFUSE-OUT-OF-SCOPE] {r['id']}")
+    if not in_scope:
+        print(f"{YELLOW}Nothing in scope to act on.{RESET}")
+        return 1
+
+    # Live existence check via Resource Graph — skip anything already deleted.
+    id_list = ", ".join("'" + r["id"].lower() + "'" for r in in_scope)
+    try:
+        rows = run_query(
+            graph_client,
+            f"Resources | where tolower(id) in~ ({id_list}) | project id=tolower(id)",
+            **query_kwargs,
+        )
+        existing = {row["id"] for row in rows}
+    except Exception as e:
+        print(f"  {YELLOW}Existence check failed ({e}); proceeding from the list.{RESET}")
+        existing = {r["id"].lower() for r in in_scope}
+
+    to_act = [r for r in in_scope if r["id"].lower() in existing]
+    for r in (r for r in in_scope if r["id"].lower() not in existing):
+        print(f"  {CYAN}already gone (skip): {r['name']}{RESET}")
+        logger.info(f"[ALREADY-GONE] {r['id']}")
+
+    mode_str = f"{YELLOW}DRY-RUN{RESET}" if dry_run else f"{RED}CONFIRM — WILL DELETE{RESET}"
+    print(f"  Mode: {mode_str}  |  {len(to_act)} resource(s) to remove")
+    print()
+    if not to_act:
+        print(f"{GREEN}Nothing left to delete.{RESET}")
+        return 0
+
+    if not dry_run:
+        print(f"{RED}{BOLD}⚠  Deleting {len(to_act)} resource(s) in 5s (Ctrl+C to cancel)...{RESET}")
+        try:
+            time.sleep(5)
+        except KeyboardInterrupt:
+            print(f"\n{YELLOW}Cancelled.{RESET}")
+            return 0
+        print()
+
+    deleted = failed = 0
+    for r in to_act:
+        env = classify_resource(r, sub_envs)
+        env_tag = f"{GREEN}[PROD]{RESET}" if env == "PRODUCTION" else f"{YELLOW}[NON-PROD]{RESET}"
+        label = (f"{r['type']}  {BOLD}{r['name']}{RESET}  "
+                 f"({sub_names.get(r['subscriptionId'], r['subscriptionId'])}) {env_tag}")
+        if dry_run:
+            print(f"  {YELLOW}[DRY-RUN]{RESET} would delete {label}")
+            logger.info(f"[DRY-RUN] would delete {r['id']}")
+        else:
+            print(f"  {CYAN}[DELETING]{RESET} {label}")
+            logger.info(f"[DELETING] {r['id']}")
+            try:
+                delete_targeted(credential, r)
+                print(f"  {GREEN}[DONE]{RESET} {r['name']}")
+                logger.info(f"[DONE] {r['id']}")
+                deleted += 1
+            except Exception as e:
+                msg = str(e).split("\n")[0][:140]
+                print(f"  {RED}[FAILED]{RESET} {r['name']}: {msg}")
+                logger.info(f"[FAILED] {r['id']}: {msg}")
+                failed += 1
+
+    print()
+    if dry_run:
+        print(f"{BOLD}Dry-run: {len(to_act)} resource(s) would be deleted. "
+              f"Re-run with --confirm to execute.{RESET}")
+    else:
+        print(f"{BOLD}Deleted {GREEN}{deleted}{RESET}{BOLD}, "
+              f"failed {RED}{failed}{RESET}{BOLD}.{RESET}")
+    return 1 if failed else 0
+
+
 # ── Deletion categories in safe dependency order ─────────────────────────────
 # (display_name, QUERIES key, deleter_func) — query text comes from
 # orphan_report.QUERIES so report and cleanup always agree on what counts
@@ -221,6 +382,14 @@ def main():
     mode.add_argument("--dry-run", action="store_true", default=True, help="Preview only (default)")
     mode.add_argument("--confirm", action="store_true", help="Actually delete resources")
     parser.add_argument("--subscription", "-s", help="Scope to a single subscription ID")
+    parser.add_argument("--tenant", "-t",
+                        help="Tenant ID to operate in. Required when the signed-in account "
+                             "can reach more than one tenant; refuses to act on a tenant the "
+                             "current login can't reach. Ignored when --subscription is set.")
+    parser.add_argument("--ids-file",
+                        help="Path to a file of resource IDs (one per line, # comments ok). "
+                             "Deletes ONLY those exact resources and skips the category "
+                             "re-scan entirely. Use this to act on an approved list.")
     parser.add_argument("--exclude-subscriptions", nargs="+", default=[],
                         help="Subscription IDs to exclude from cleanup")
     parser.add_argument("--production-only", action="store_true",
@@ -247,13 +416,31 @@ def main():
         sub_names = {args.subscription: args.subscription}
         sub_display = f"1 subscription ({args.subscription})"
     else:
-        # Use tenant root management group for full tenant coverage
-        first_tenant = next(sub_client.tenants.list(), None)
-        if first_tenant is None:
+        # Require an explicit --tenant whenever the login can reach more than
+        # one tenant. Never guess — this is a DELETE tool on an account that
+        # may hold several client logins at once.
+        visible_tenants = [t.tenant_id for t in sub_client.tenants.list()]
+        if args.tenant:
+            tenant_id = args.tenant
+            if visible_tenants and tenant_id not in visible_tenants:
+                print(f"{RED}Refusing to act: --tenant {tenant_id} is not the tenant "
+                      f"this login can reach ({', '.join(visible_tenants)}). "
+                      f"Run 'az login' / 'az account set' into {tenant_id} first.{RESET}")
+                return 1
+        elif len(visible_tenants) == 1:
+            tenant_id = visible_tenants[0]
+        elif not visible_tenants:
             print(f"{RED}No tenants found.{RESET}")
             return 1
-        tenant_id = first_tenant.tenant_id
+        else:
+            print(f"{RED}This login can reach {len(visible_tenants)} tenants. "
+                  f"Refusing to guess which one to clean up — pass --tenant <id> "
+                  f"(or --subscription <id>).{RESET}")
+            for t in visible_tenants:
+                print(f"    {t}")
+            return 1
         query_kwargs["mgmt_group"] = tenant_id
+        print(f"{BOLD}Operating in tenant {tenant_id}{RESET}")
 
         # Discover all enabled subscriptions via Resource Graph for display names
         all_subs = run_query(
@@ -272,6 +459,13 @@ def main():
 
     # ── Classify subscriptions by environment ─────────────────────────────
     sub_envs = {sid: classify_subscription(sname) for sid, sname in sub_names.items()}
+
+    # ── Targeted mode: delete exactly an approved list of IDs, nothing else ──
+    if args.ids_file:
+        logger.info("=" * 50)
+        logger.info(f"orphan_cleanup.py TARGETED (DRY_RUN={dry_run}, ids_file={args.ids_file})")
+        return run_targeted_cleanup(credential, graph_client, args.ids_file,
+                                    sub_names, sub_envs, dry_run, query_kwargs)
 
     logger.info("=" * 50)
     logger.info(f"orphan_cleanup.py started (DRY_RUN={dry_run}, PRODUCTION_ONLY={args.production_only})")
