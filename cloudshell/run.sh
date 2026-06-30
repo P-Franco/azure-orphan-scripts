@@ -1,19 +1,29 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────────────────────
-# Azure Orphaned Resources Scanner — Cloud Shell Runner
+# Azure Orphaned Resources Toolkit — Cloud Shell Runner
 #
 # Usage (from Cloud Shell):
 #   cd ~/clouddrive/cloudshell   # or wherever you uploaded this folder
 #   chmod +x run.sh
-#   ./run.sh                     # scan entire tenant, console output
-#   ./run.sh --format json       # export JSON
-#   ./run.sh --format csv        # export CSV
-#   ./run.sh --format html       # interactive HTML dashboard
-#   ./run.sh --format excel      # formatted Excel workbook
-#   ./run.sh -s <sub-id>         # scan single subscription
-#   ./run.sh --no-cost-data      # skip Cost Management (no RBAC needed)
 #
-# All flags from orphan_report.py / generate_excel_report.py pass through.
+# Scan (default command):
+#   ./run.sh                       # scan, console output
+#   ./run.sh --format excel        # formatted Excel workbook
+#   ./run.sh --format json|csv|html
+#   ./run.sh --tenant <id>         # scope to a specific tenant (recommended)
+#   ./run.sh -s <sub-id>           # scan a single subscription
+#
+# Other commands (bootstrap the same venv):
+#   ./run.sh excel    [args]       # Excel report (same as scan --format excel)
+#   ./run.sh cleanup  [args]       # delete orphans — DRY-RUN unless --confirm
+#   ./run.sh pptx     [args]       # CIR PowerPoint deck (needs --input scan.json)
+#   ./run.sh vm-backup [args]      # VM backup gap analysis
+#
+# Examples:
+#   ./run.sh cleanup --tenant <id> --ids-file approved.txt            # preview
+#   ./run.sh cleanup --tenant <id> --ids-file approved.txt --confirm  # delete
+#
+# All flags pass straight through to the underlying Python script.
 # ──────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -67,56 +77,69 @@ else
     info "Dependencies up to date."
 fi
 
-# ── Determine output format and dispatch ─────────────────────────────
-FORMAT=""
-PASSTHROUGH_ARGS=()
-
-for arg in "$@"; do
-    if [ "$FORMAT" = "NEXT" ]; then
-        FORMAT="$arg"
-        continue
-    fi
-    if [ "$arg" = "--format" ] || [ "$arg" = "-f" ]; then
-        FORMAT="NEXT"
-        continue
-    fi
-    # Handle --format=value
-    if [[ "$arg" == --format=* ]]; then
-        FORMAT="${arg#--format=}"
-        continue
-    fi
-    PASSTHROUGH_ARGS+=("$arg")
-done
-
-# If FORMAT was never set (flag not passed), default to console
-if [ "$FORMAT" = "" ] || [ "$FORMAT" = "NEXT" ]; then
-    FORMAT="console"
-fi
-
-echo ""
-info "Output format: ${FORMAT}"
-info "Starting scan ..."
-echo ""
+# ── Command dispatch ─────────────────────────────────────────────────
+# First positional arg may name a command; anything else (a flag, or
+# nothing) defaults to a scan, preserving the original `./run.sh --format`
+# interface.
+COMMAND="scan"
+case "${1:-}" in
+    scan|excel|cleanup|pptx|vm-backup)
+        COMMAND="$1"; shift ;;
+esac
 
 # cd into the script dir so Python can resolve local imports
-# (azure_cost_enrichment is imported lazily by the scanner)
+# (azure_cost_enrichment / orphan_report are imported by their siblings).
 cd "$SCRIPT_DIR"
 
-# Disable set -e around the Python call so we can capture the exit code
-# and give the user a useful error message instead of a silent death.
 set +e
-if [ "$FORMAT" = "excel" ]; then
-    python3 generate_excel_report.py "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
-else
-    python3 orphan_report.py --format "$FORMAT" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
-fi
+case "$COMMAND" in
+    scan)
+        # Parse --format out of the remaining args; default to console.
+        FORMAT=""
+        PASSTHROUGH_ARGS=()
+        for arg in "$@"; do
+            if [ "$FORMAT" = "NEXT" ]; then FORMAT="$arg"; continue; fi
+            if [ "$arg" = "--format" ] || [ "$arg" = "-f" ]; then FORMAT="NEXT"; continue; fi
+            if [[ "$arg" == --format=* ]]; then FORMAT="${arg#--format=}"; continue; fi
+            PASSTHROUGH_ARGS+=("$arg")
+        done
+        if [ "$FORMAT" = "" ] || [ "$FORMAT" = "NEXT" ]; then FORMAT="console"; fi
+        echo ""
+        info "Scan — output format: ${FORMAT}"
+        echo ""
+        if [ "$FORMAT" = "excel" ]; then
+            python3 generate_excel_report.py "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+        else
+            python3 orphan_report.py --format "$FORMAT" "${PASSTHROUGH_ARGS[@]+"${PASSTHROUGH_ARGS[@]}"}"
+        fi
+        ;;
+    excel)
+        echo ""; info "Generating Excel report ..."; echo ""
+        python3 generate_excel_report.py "$@"
+        ;;
+    cleanup)
+        echo ""
+        warn "Cleanup is DRY-RUN unless you pass --confirm. It will only act on"
+        warn "the tenant you are logged into; pass --tenant to be explicit."
+        echo ""
+        python3 orphan_cleanup.py "$@"
+        ;;
+    pptx)
+        echo ""; info "Generating PowerPoint deck ..."; echo ""
+        python3 generate_pptx_slide.py "$@"
+        ;;
+    vm-backup)
+        echo ""; info "Running VM backup gap analysis ..."; echo ""
+        python3 vm_backup_gap_analysis.py "$@"
+        ;;
+esac
 EXIT_CODE=$?
 set -e
 echo ""
 
 if [ $EXIT_CODE -eq 0 ]; then
-    info "Scan complete."
-    if [ "$FORMAT" != "console" ]; then
+    info "${COMMAND} complete."
+    if [ "$COMMAND" = "scan" ] || [ "$COMMAND" = "excel" ]; then
         info "Output files:"
         ls -lh "$SCRIPT_DIR"/*.{json,csv,html,xlsx} 2>/dev/null | while read -r line; do
             echo "     $line"
@@ -126,5 +149,5 @@ if [ $EXIT_CODE -eq 0 ]; then
         warn "or use: download <filename>"
     fi
 else
-    fail "Scan exited with code $EXIT_CODE"
+    fail "${COMMAND} exited with code $EXIT_CODE"
 fi

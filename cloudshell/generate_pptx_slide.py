@@ -1,0 +1,526 @@
+#!/usr/bin/env python3
+"""
+generate_pptx_slide.py
+
+Generates a CIR-ready PowerPoint deck (3 slides) summarising orphaned Azure
+resources.  Reads from a JSON report produced by orphan_report.py.
+
+Slides:
+  1. Executive Summary  — KPIs, environment split, top resource types
+  2. Detailed Breakdown — full resource type table with costs, per-subscription view
+  3. Action Items       — highest-cost orphans by name, next steps
+
+Usage:
+  python3 orphan_report.py --format json --output scan.json
+  python3 generate_pptx_slide.py --input scan.json
+  python3 generate_pptx_slide.py --input scan.json --output monthly-cir.pptx --client "Contoso Corp"
+"""
+
+import argparse
+import json
+import sys
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
+
+from pptx import Presentation
+from pptx.util import Inches, Pt, Emu
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE
+
+
+# ── Colour palette ───────────────────────────────────────────────────────────
+WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+DARK_BG = RGBColor(0x1B, 0x2A, 0x4A)       # dark navy
+ACCENT_BLUE = RGBColor(0x3B, 0x82, 0xF6)   # bright blue
+ACCENT_GREEN = RGBColor(0x10, 0xB9, 0x81)   # emerald
+ACCENT_AMBER = RGBColor(0xF5, 0x9E, 0x0B)   # amber
+ACCENT_RED = RGBColor(0xEF, 0x44, 0x44)     # red
+LIGHT_GRAY = RGBColor(0x94, 0xA3, 0xB8)     # slate-400
+MID_GRAY = RGBColor(0xCB, 0xD5, 0xE1)       # slate-300
+CARD_BG = RGBColor(0x1E, 0x33, 0x5C)        # slightly lighter navy
+TABLE_HEADER_BG = RGBColor(0x33, 0x4E, 0x7E)
+TABLE_ROW_ALT = RGBColor(0x24, 0x3B, 0x67)
+DIVIDER = RGBColor(0x33, 0x4E, 0x7E)
+
+
+def _add_rounded_rect(slide, left, top, width, height, fill_color):
+    """Add a rounded rectangle shape as a card background."""
+    shape = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, left, top, width, height
+    )
+    shape.fill.solid()
+    shape.fill.fore_color.rgb = fill_color
+    shape.line.fill.background()
+    # Subtle rounding
+    shape.adjustments[0] = 0.05
+    return shape
+
+
+def _add_text_box(slide, left, top, width, height, text, font_size=12,
+                  bold=False, color=WHITE, alignment=PP_ALIGN.LEFT,
+                  font_name="Calibri"):
+    """Add a text box with the specified formatting."""
+    txbox = slide.shapes.add_textbox(left, top, width, height)
+    tf = txbox.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.text = text
+    p.font.size = Pt(font_size)
+    p.font.bold = bold
+    p.font.color.rgb = color
+    p.font.name = font_name
+    p.alignment = alignment
+    return txbox
+
+
+def _add_kpi_card(slide, left, top, label, value, color=ACCENT_BLUE):
+    """Add a KPI card (label + big number)."""
+    card_w = Inches(2.7)
+    card_h = Inches(1.35)
+    _add_rounded_rect(slide, left, top, card_w, card_h, CARD_BG)
+    # Value (big number)
+    _add_text_box(slide, left + Inches(0.2), top + Inches(0.15),
+                  card_w - Inches(0.4), Inches(0.7),
+                  str(value), font_size=32, bold=True, color=color,
+                  alignment=PP_ALIGN.CENTER)
+    # Label
+    _add_text_box(slide, left + Inches(0.2), top + Inches(0.85),
+                  card_w - Inches(0.4), Inches(0.4),
+                  label, font_size=11, bold=False, color=LIGHT_GRAY,
+                  alignment=PP_ALIGN.CENTER)
+
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+def _dark_bg(slide):
+    """Apply the dark navy background to a slide."""
+    fill = slide.background.fill
+    fill.solid()
+    fill.fore_color.rgb = DARK_BG
+
+
+def _slide_title(slide, title, subtitle):
+    """Add a consistent title + subtitle bar to any slide."""
+    _add_text_box(slide, Inches(0.5), Inches(0.2), Inches(8), Inches(0.45),
+                  title, font_size=20, bold=True, color=WHITE)
+    _add_text_box(slide, Inches(0.5), Inches(0.6), Inches(8), Inches(0.28),
+                  subtitle, font_size=11, bold=False, color=LIGHT_GRAY)
+
+
+def _slide_footer(slide):
+    """Reserved for optional footer — currently no-op."""
+    pass
+
+
+def _parse_common(data):
+    """Extract common metrics from the JSON data."""
+    resources = data.get("resources", [])
+    total = data.get("totalResources", len(resources))
+    total_cost = data.get("estimatedMonthlyCost",
+                          sum(r.get("estimatedMonthlyCost", 0) for r in resources))
+    scan_date = data.get("generatedAt", datetime.now(timezone.utc).isoformat())
+    try:
+        dt = datetime.fromisoformat(scan_date.replace("Z", "+00:00"))
+        date_str = dt.strftime("%B %Y")
+    except Exception:
+        date_str = scan_date[:10]
+
+    prod_count = sum(1 for r in resources if r.get("environment") == "PRODUCTION")
+    nonprod_count = total - prod_count
+    type_counts = Counter(r.get("category", "Unknown") for r in resources)
+    subs = {r.get("subscription", "") for r in resources} - {""}
+
+    # Cost per category
+    cat_costs = defaultdict(float)
+    for r in resources:
+        cat_costs[r.get("category", "Unknown")] += r.get("estimatedMonthlyCost", 0)
+
+    # Per-subscription counts
+    sub_counts = Counter(r.get("subscription", "Unknown") for r in resources)
+
+    return {
+        "resources": resources, "total": total, "total_cost": total_cost,
+        "date_str": date_str, "prod_count": prod_count, "nonprod_count": nonprod_count,
+        "type_counts": type_counts, "cat_costs": cat_costs,
+        "sub_count": len(subs), "sub_counts": sub_counts,
+    }
+
+
+# ── Slide 1: Executive Summary ──────────────────────────────────────────────
+
+def _build_slide_1_summary(prs, data, client_name):
+    """KPIs, environment split, top resource types."""
+    blank = prs.slide_layouts[6]
+    slide = prs.slides.add_slide(blank)
+    _dark_bg(slide)
+    m = _parse_common(data)
+
+    _slide_title(slide, "Azure Orphaned Resources — Executive Summary",
+                 f"{client_name}  •  {m['date_str']}")
+
+    # KPI Cards
+    kpi_top = Inches(1.1)
+    kpi_gap = Inches(0.25)
+    kpi_w = Inches(2.7)
+    _add_kpi_card(slide, Inches(0.5), kpi_top,
+                  "Total Orphaned Resources", f"{m['total']:,}", ACCENT_BLUE)
+    _add_kpi_card(slide, Inches(0.5) + kpi_w + kpi_gap, kpi_top,
+                  "Est. Monthly Waste", f"${m['total_cost']:,.2f}", ACCENT_RED)
+    _add_kpi_card(slide, Inches(0.5) + 2 * (kpi_w + kpi_gap), kpi_top,
+                  "Subscriptions Scanned", f"{m['sub_count']}", ACCENT_GREEN)
+
+    # ── Bottom section: Env split (left) + Top types (right) ───────────
+    section_top = Inches(2.7)
+    top_types = m["type_counts"].most_common(6)
+    num_rows = len(top_types)
+    # Calculate card height to fit both cards to same height
+    types_h = 0.45 + num_rows * 0.24  # dynamic based on rows
+    card_h = max(types_h, 1.15)       # at least enough for env split content
+    card_h_in = Inches(card_h)
+
+    # ── Left: Environment split ──────────────────────────────────────
+    _add_rounded_rect(slide, Inches(0.5), section_top, Inches(4.0), card_h_in, CARD_BG)
+    _add_text_box(slide, Inches(0.7), section_top + Inches(0.1),
+                  Inches(3.6), Inches(0.25),
+                  "ENVIRONMENT SPLIT", font_size=10, bold=True, color=LIGHT_GRAY)
+
+    bar_left = Inches(0.7)
+    bar_top = section_top + Inches(0.5)
+    bar_full_w = Inches(3.6)
+    bar_h = Inches(0.28)
+    prod_pct = (m["prod_count"] / m["total"] * 100) if m["total"] > 0 else 0
+    nonprod_pct = 100 - prod_pct
+
+    if m["prod_count"] > 0:
+        pw = int(bar_full_w * prod_pct / 100)
+        s = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, bar_left, bar_top, pw, bar_h)
+        s.fill.solid(); s.fill.fore_color.rgb = ACCENT_GREEN; s.line.fill.background()
+        s.adjustments[0] = 0.3
+    if m["nonprod_count"] > 0:
+        nw = int(bar_full_w * nonprod_pct / 100)
+        s = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                   bar_left + int(bar_full_w * prod_pct / 100), bar_top, nw, bar_h)
+        s.fill.solid(); s.fill.fore_color.rgb = ACCENT_AMBER; s.line.fill.background()
+        s.adjustments[0] = 0.3
+
+    _add_text_box(slide, Inches(0.7), bar_top + Inches(0.35), Inches(1.8), Inches(0.25),
+                  f"● Production: {m['prod_count']} ({prod_pct:.0f}%)",
+                  font_size=9, color=ACCENT_GREEN)
+    _add_text_box(slide, Inches(2.5), bar_top + Inches(0.35), Inches(1.8), Inches(0.25),
+                  f"● Non-Prod: {m['nonprod_count']} ({nonprod_pct:.0f}%)",
+                  font_size=9, color=ACCENT_AMBER)
+
+    # ── Right: Top resource types ────────────────────────────────────
+    tbl_left = Inches(4.75)
+    _add_rounded_rect(slide, tbl_left - Inches(0.1), section_top,
+                      Inches(5.0), card_h_in, CARD_BG)
+    _add_text_box(slide, tbl_left, section_top + Inches(0.1),
+                  Inches(4.8), Inches(0.25),
+                  "TOP RESOURCE TYPES", font_size=10, bold=True, color=LIGHT_GRAY)
+
+    y = section_top + Inches(0.42)
+    for cat_name, count in top_types:
+        display = cat_name[:40] + "…" if len(cat_name) > 40 else cat_name
+        _add_text_box(slide, tbl_left, y, Inches(3.8), Inches(0.22),
+                      display, font_size=9, color=WHITE)
+        _add_text_box(slide, tbl_left + Inches(3.8), y, Inches(0.9), Inches(0.22),
+                      str(count), font_size=9, bold=True, color=ACCENT_BLUE,
+                      alignment=PP_ALIGN.RIGHT)
+        y += Inches(0.24)
+
+    # ── Recommendation strip (positioned below the cards) ────────────
+    rec_top = section_top + card_h_in + Inches(0.15)
+    _add_rounded_rect(slide, Inches(0.5), rec_top, Inches(9.15), Inches(0.55), CARD_BG)
+    if m["total_cost"] > 0:
+        rec = (f"Recommendation: Review and clean up {m['total']:,} orphaned resources "
+               f"to save an estimated ${m['total_cost']:,.2f}/month.")
+    else:
+        rec = (f"{m['total']:,} orphaned resources found. "
+               f"Clean up recommended for hygiene and security posture.")
+    _add_text_box(slide, Inches(0.7), rec_top + Inches(0.12),
+                  Inches(8.8), Inches(0.35), rec, font_size=9, color=WHITE)
+
+    _slide_footer(slide)
+
+
+# ── Slide 2: Detailed Breakdown ──────────────────────────────────────────────
+
+def _build_slide_2_breakdown(prs, data, client_name):
+    """Full resource type table with counts + costs, and per-subscription view."""
+    blank = prs.slide_layouts[6]
+    slide = prs.slides.add_slide(blank)
+    _dark_bg(slide)
+    m = _parse_common(data)
+
+    _slide_title(slide, "Detailed Breakdown",
+                 f"{client_name}  •  {m['date_str']}")
+
+    # ── Left: All resource types table ───────────────────────────────────
+    _add_text_box(slide, Inches(0.5), Inches(0.95), Inches(5.0), Inches(0.25),
+                  "ALL RESOURCE TYPES", font_size=10, bold=True, color=LIGHT_GRAY)
+
+    # Header row
+    hdr_y = Inches(1.22)
+    _add_rounded_rect(slide, Inches(0.5), hdr_y, Inches(5.2), Inches(0.26), TABLE_HEADER_BG)
+    _add_text_box(slide, Inches(0.6), hdr_y, Inches(2.8), Inches(0.26),
+                  "Resource Type", font_size=8, bold=True, color=MID_GRAY)
+    _add_text_box(slide, Inches(3.4), hdr_y, Inches(0.6), Inches(0.26),
+                  "Count", font_size=8, bold=True, color=MID_GRAY, alignment=PP_ALIGN.RIGHT)
+    _add_text_box(slide, Inches(4.0), hdr_y, Inches(0.7), Inches(0.26),
+                  "Prod", font_size=8, bold=True, color=MID_GRAY, alignment=PP_ALIGN.RIGHT)
+    _add_text_box(slide, Inches(4.7), hdr_y, Inches(0.9), Inches(0.26),
+                  "Est. Cost", font_size=8, bold=True, color=MID_GRAY, alignment=PP_ALIGN.RIGHT)
+
+    # Compute prod counts per category
+    cat_prod = Counter()
+    for r in m["resources"]:
+        if r.get("environment") == "PRODUCTION":
+            cat_prod[r.get("category", "Unknown")] += 1
+
+    y = hdr_y + Inches(0.28)
+    row_h = Inches(0.22)
+    all_types = m["type_counts"].most_common()
+    max_rows = 14
+    for i, (cat_name, count) in enumerate(all_types[:max_rows]):
+        if i % 2 == 1:
+            _add_rounded_rect(slide, Inches(0.5), y, Inches(5.2), row_h, TABLE_ROW_ALT)
+
+        display = cat_name[:30] + "…" if len(cat_name) > 30 else cat_name
+        cost = m["cat_costs"].get(cat_name, 0)
+        prod_n = cat_prod.get(cat_name, 0)
+
+        _add_text_box(slide, Inches(0.6), y, Inches(2.8), row_h,
+                      display, font_size=8, color=WHITE)
+        _add_text_box(slide, Inches(3.4), y, Inches(0.6), row_h,
+                      str(count), font_size=8, bold=True, color=ACCENT_BLUE,
+                      alignment=PP_ALIGN.RIGHT)
+        _add_text_box(slide, Inches(4.0), y, Inches(0.7), row_h,
+                      str(prod_n), font_size=8, color=ACCENT_GREEN,
+                      alignment=PP_ALIGN.RIGHT)
+        cost_str = f"${cost:,.0f}" if cost > 0 else "—"
+        cost_color = ACCENT_RED if cost > 0 else LIGHT_GRAY
+        _add_text_box(slide, Inches(4.7), y, Inches(0.9), row_h,
+                      cost_str, font_size=8, color=cost_color,
+                      alignment=PP_ALIGN.RIGHT)
+        y += row_h
+
+    # Totals row
+    y += Inches(0.04)
+    _add_rounded_rect(slide, Inches(0.5), y, Inches(5.2), Inches(0.26), TABLE_HEADER_BG)
+    _add_text_box(slide, Inches(0.6), y, Inches(2.8), Inches(0.26),
+                  "TOTAL", font_size=8, bold=True, color=WHITE)
+    _add_text_box(slide, Inches(3.4), y, Inches(0.6), Inches(0.26),
+                  str(m["total"]), font_size=8, bold=True, color=ACCENT_BLUE,
+                  alignment=PP_ALIGN.RIGHT)
+    _add_text_box(slide, Inches(4.0), y, Inches(0.7), Inches(0.26),
+                  str(m["prod_count"]), font_size=8, bold=True, color=ACCENT_GREEN,
+                  alignment=PP_ALIGN.RIGHT)
+    cost_str = f"${m['total_cost']:,.2f}" if m["total_cost"] > 0 else "—"
+    _add_text_box(slide, Inches(4.7), y, Inches(0.9), Inches(0.26),
+                  cost_str, font_size=8, bold=True, color=ACCENT_RED,
+                  alignment=PP_ALIGN.RIGHT)
+
+    # ── Right: Per-subscription breakdown ────────────────────────────────
+    right_x = Inches(6.0)
+    _add_text_box(slide, right_x, Inches(0.95), Inches(3.8), Inches(0.25),
+                  "BY SUBSCRIPTION", font_size=10, bold=True, color=LIGHT_GRAY)
+
+    # Header
+    _add_rounded_rect(slide, right_x, hdr_y, Inches(3.8), Inches(0.26), TABLE_HEADER_BG)
+    _add_text_box(slide, right_x + Inches(0.1), hdr_y, Inches(2.8), Inches(0.26),
+                  "Subscription", font_size=8, bold=True, color=MID_GRAY)
+    _add_text_box(slide, right_x + Inches(2.9), hdr_y, Inches(0.7), Inches(0.26),
+                  "Orphans", font_size=8, bold=True, color=MID_GRAY,
+                  alignment=PP_ALIGN.RIGHT)
+
+    y = hdr_y + Inches(0.28)
+    top_subs = m["sub_counts"].most_common(14)
+    for i, (sub_name, count) in enumerate(top_subs):
+        if i % 2 == 1:
+            _add_rounded_rect(slide, right_x, y, Inches(3.8), row_h, TABLE_ROW_ALT)
+        display = sub_name[:28] + "…" if len(sub_name) > 28 else sub_name
+        _add_text_box(slide, right_x + Inches(0.1), y, Inches(2.8), row_h,
+                      display, font_size=8, color=WHITE)
+        _add_text_box(slide, right_x + Inches(2.9), y, Inches(0.7), row_h,
+                      str(count), font_size=8, bold=True, color=ACCENT_BLUE,
+                      alignment=PP_ALIGN.RIGHT)
+        y += row_h
+
+    _slide_footer(slide)
+
+
+# ── Slide 3: Action Items ────────────────────────────────────────────────────
+
+def _build_slide_3_actions(prs, data, client_name):
+    """Top-cost orphans by name and recommended next steps."""
+    blank = prs.slide_layouts[6]
+    slide = prs.slides.add_slide(blank)
+    _dark_bg(slide)
+    m = _parse_common(data)
+
+    _slide_title(slide, "Action Items & Recommendations",
+                 f"{client_name}  •  {m['date_str']}")
+
+    # ── Left: Highest-cost orphans ───────────────────────────────────────
+    _add_text_box(slide, Inches(0.5), Inches(0.95), Inches(5.5), Inches(0.25),
+                  "HIGHEST-COST ORPHANED RESOURCES", font_size=10, bold=True, color=LIGHT_GRAY)
+
+    hdr_y = Inches(1.22)
+    _add_rounded_rect(slide, Inches(0.5), hdr_y, Inches(5.8), Inches(0.26), TABLE_HEADER_BG)
+    _add_text_box(slide, Inches(0.6), hdr_y, Inches(2.0), Inches(0.26),
+                  "Resource Name", font_size=8, bold=True, color=MID_GRAY)
+    _add_text_box(slide, Inches(2.6), hdr_y, Inches(1.4), Inches(0.26),
+                  "Type", font_size=8, bold=True, color=MID_GRAY)
+    _add_text_box(slide, Inches(4.0), hdr_y, Inches(1.2), Inches(0.26),
+                  "Subscription", font_size=8, bold=True, color=MID_GRAY)
+    _add_text_box(slide, Inches(5.2), hdr_y, Inches(0.5), Inches(0.26),
+                  "Env", font_size=8, bold=True, color=MID_GRAY, alignment=PP_ALIGN.CENTER)
+    _add_text_box(slide, Inches(5.55), hdr_y, Inches(0.7), Inches(0.26),
+                  "Cost/mo", font_size=8, bold=True, color=MID_GRAY, alignment=PP_ALIGN.RIGHT)
+
+    # Sort by cost descending, then by name
+    sorted_res = sorted(m["resources"],
+                        key=lambda r: (-r.get("estimatedMonthlyCost", 0), r.get("name", "")))
+
+    y = hdr_y + Inches(0.28)
+    row_h = Inches(0.22)
+    max_rows = 12
+    for i, r in enumerate(sorted_res[:max_rows]):
+        if i % 2 == 1:
+            _add_rounded_rect(slide, Inches(0.5), y, Inches(5.8), row_h, TABLE_ROW_ALT)
+
+        name = r.get("name", "")
+        name_disp = name[:22] + "…" if len(name) > 22 else name
+        cat = r.get("category", "")
+        cat_short = cat[:16] + "…" if len(cat) > 16 else cat
+        sub = r.get("subscription", "")
+        sub_short = sub[:14] + "…" if len(sub) > 14 else sub
+        env = r.get("environment", "PRODUCTION")
+        env_short = "PROD" if env == "PRODUCTION" else "NON-P"
+        env_color = ACCENT_GREEN if env == "PRODUCTION" else ACCENT_AMBER
+        cost = r.get("estimatedMonthlyCost", 0)
+
+        _add_text_box(slide, Inches(0.6), y, Inches(2.0), row_h,
+                      name_disp, font_size=8, color=WHITE)
+        _add_text_box(slide, Inches(2.6), y, Inches(1.4), row_h,
+                      cat_short, font_size=7, color=LIGHT_GRAY)
+        _add_text_box(slide, Inches(4.0), y, Inches(1.2), row_h,
+                      sub_short, font_size=7, color=LIGHT_GRAY)
+        _add_text_box(slide, Inches(5.2), y, Inches(0.5), row_h,
+                      env_short, font_size=7, bold=True, color=env_color,
+                      alignment=PP_ALIGN.CENTER)
+        cost_str = f"${cost:,.0f}" if cost > 0 else "—"
+        cost_color = ACCENT_RED if cost > 0 else LIGHT_GRAY
+        _add_text_box(slide, Inches(5.55), y, Inches(0.7), row_h,
+                      cost_str, font_size=8, bold=True, color=cost_color,
+                      alignment=PP_ALIGN.RIGHT)
+        y += row_h
+
+    # ── Right: Next Steps card ───────────────────────────────────────────
+    steps_left = Inches(6.6)
+    steps_top = Inches(0.95)
+    _add_text_box(slide, steps_left, steps_top, Inches(3.2), Inches(0.25),
+                  "RECOMMENDED NEXT STEPS", font_size=10, bold=True, color=LIGHT_GRAY)
+
+    card_top = Inches(1.22)
+    _add_rounded_rect(slide, steps_left, card_top, Inches(3.2), Inches(3.5), CARD_BG)
+
+    steps = [
+        ("1", "Review this report", "Confirm orphaned resources with application owners."),
+        ("2", "Run dry-run cleanup", "python3 orphan_cleanup.py\n--production-only --dry-run"),
+        ("3", "Delete confirmed orphans", "python3 orphan_cleanup.py\n--production-only --confirm"),
+        ("4", "Schedule monthly scan", "Automate scans to catch new orphans each month."),
+    ]
+
+    y = card_top + Inches(0.15)
+    for num, title, desc in steps:
+        # Number badge
+        badge = slide.shapes.add_shape(
+            MSO_SHAPE.OVAL,
+            steps_left + Inches(0.15), y + Inches(0.02),
+            Inches(0.22), Inches(0.22)
+        )
+        badge.fill.solid()
+        badge.fill.fore_color.rgb = ACCENT_BLUE
+        badge.line.fill.background()
+        tf = badge.text_frame
+        tf.paragraphs[0].text = num
+        tf.paragraphs[0].font.size = Pt(8)
+        tf.paragraphs[0].font.bold = True
+        tf.paragraphs[0].font.color.rgb = WHITE
+        tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+        tf.word_wrap = False
+
+        _add_text_box(slide, steps_left + Inches(0.45), y,
+                      Inches(2.6), Inches(0.22),
+                      title, font_size=10, bold=True, color=WHITE)
+        _add_text_box(slide, steps_left + Inches(0.45), y + Inches(0.22),
+                      Inches(2.6), Inches(0.5),
+                      desc, font_size=8, color=LIGHT_GRAY)
+        y += Inches(0.82)
+
+    # Key metrics reminder at bottom of steps card
+    y = card_top + Inches(3.05)
+    _add_text_box(slide, steps_left + Inches(0.15), y,
+                  Inches(2.9), Inches(0.35),
+                  f"Potential savings: ${m['total_cost']:,.2f}/month"
+                  f" ({m['total']:,} resources)",
+                  font_size=9, bold=True, color=ACCENT_AMBER)
+
+    _slide_footer(slide)
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate CIR-ready PowerPoint deck (3 slides) from orphan report JSON"
+    )
+    parser.add_argument("--input", "-i", required=True,
+                        help="Path to JSON report from orphan_report.py")
+    parser.add_argument("--output", "-o", default=None,
+                        help="Output .pptx file (default: orphan-cir-YYYYMM.pptx)")
+    parser.add_argument("--client", "-c", default="Azure Tenant",
+                        help="Client name for the slide headers")
+    args = parser.parse_args()
+
+    # Load JSON
+    try:
+        with open(args.input, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: File not found: {args.input}")
+        return 1
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON: {e}")
+        return 1
+
+    # Output path
+    if args.output:
+        out_path = args.output
+    else:
+        month_str = datetime.now(timezone.utc).strftime("%Y%m")
+        out_path = f"orphan-cir-{month_str}.pptx"
+
+    # Build presentation
+    prs = Presentation()
+    prs.slide_width = Inches(10)
+    prs.slide_height = Inches(5.625)  # 16:9
+
+    _build_slide_1_summary(prs, data, args.client)
+    _build_slide_2_breakdown(prs, data, args.client)
+    _build_slide_3_actions(prs, data, args.client)
+
+    prs.save(out_path)
+    total = data.get("totalResources", len(data.get("resources", [])))
+    cost = data.get("estimatedMonthlyCost", 0)
+    print(f"✓ CIR deck saved to: {out_path}  (3 slides)")
+    print(f"  Client:    {args.client}")
+    print(f"  Resources: {total}")
+    print(f"  Est. waste: ${cost:,.2f}/month")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)

@@ -73,6 +73,23 @@ source .venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 ```
 
+## Cloud Shell (drop-in)
+
+The `cloudshell/` folder is a self-contained bundle of the whole toolkit. Upload it to Azure Cloud Shell (or `git clone` the repo and `cd cloudshell`) and run everything through `run.sh`, which builds a venv, installs dependencies, and reuses the Cloud Shell portal session for auth — no `az login` needed.
+
+```bash
+chmod +x run.sh
+
+./run.sh                                              # scan, console output
+./run.sh --format excel --tenant <tenant-id>          # Excel workbook, tenant-scoped
+./run.sh cleanup --tenant <id> --ids-file approved.txt           # preview deletions (dry-run)
+./run.sh cleanup --tenant <id> --ids-file approved.txt --confirm # delete the approved list
+./run.sh pptx --input scan.json --client "Acme"       # CIR PowerPoint deck
+./run.sh vm-backup --tenant <id>                      # VM backup gap analysis
+```
+
+The bundle is kept byte-identical to the root scripts by a test (`test_cloudshell_copies_match_root`); re-run `cp <script> cloudshell/` and the suite will confirm there's no drift.
+
 ## Tests (offline, no Azure needed)
 
 ```bash

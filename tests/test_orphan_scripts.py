@@ -627,3 +627,23 @@ def test_targeted_cleanup_refuses_out_of_scope(monkeypatch, tmp_path):
     assert all("OUT" not in d for d in deleted)
     assert deleted == ["/subscriptions/IN/resourceGroups/g/providers/Microsoft.Network/publicIPAddresses/keep"]
     assert rc == 0
+
+
+# ── Cloud Shell bundle integrity ──────────────────────────────────────────────
+def test_cloudshell_copies_match_root():
+    """The cloudshell/ drop-in bundle must match the root scripts so a Cloud
+    Shell run can never diverge from an azcli run. Compares content (line
+    endings normalized — eol is enforced separately by .gitattributes)."""
+    shared = [
+        "orphan_report.py", "generate_excel_report.py", "azure_cost_enrichment.py",
+        "orphan_cleanup.py", "generate_pptx_slide.py", "vm_backup_gap_analysis.py",
+        "requirements.txt",
+    ]
+    cs_dir = os.path.join(REPO_ROOT, "cloudshell")
+    for name in shared:
+        cs_path = os.path.join(cs_dir, name)
+        assert os.path.exists(cs_path), f"cloudshell/{name} is missing from the bundle"
+        with open(os.path.join(REPO_ROOT, name), encoding="utf-8") as a, \
+                open(cs_path, encoding="utf-8") as b:
+            assert a.read().splitlines() == b.read().splitlines(), \
+                f"cloudshell/{name} has drifted from root {name} — re-sync the bundle"
