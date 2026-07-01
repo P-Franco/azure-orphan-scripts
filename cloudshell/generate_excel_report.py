@@ -456,6 +456,23 @@ def main():
     grand_last_cell.font = Font(bold=True, size=12)
     grand_last_cell.number_format = '$#,##0.00'
 
+    # ── Legend: explains "Incurs Cost? = Yes" alongside "Monthly Cost = $0" ──
+    row_num += 2
+    ws_sum.cell(row=row_num, column=1, value="Notes").font = Font(name="Calibri", bold=True, size=10, color="1F4E79")
+    note_font = Font(name="Calibri", size=9, italic=True, color="595959")
+    for note in [
+        "\"Incurs Cost?\" shows whether this resource type can bill when in use. "
+        "\"Monthly Cost\" is the actual charge from Azure Cost Management for the period above.",
+        "A \"Yes\" with $0.00 means the type can bill but Azure recorded no charge for this "
+        "specific resource. That is normally a free or Basic tier, a resource too new to have "
+        "billed, or one that is deallocated.",
+        "\"Rolling 30d (actual)\" is verified billing data. \"Monthly Cost\" uses a fallback "
+        "estimate only where no billing record exists (see the Cost Source column on the "
+        "All Resources tab).",
+    ]:
+        row_num += 1
+        ws_sum.cell(row=row_num, column=1, value=note).font = note_font
+
     auto_width(ws_sum)
 
     # ── Production detail sheet ───────────────────────────────────────────
