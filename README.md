@@ -75,11 +75,27 @@ pip install -r requirements.txt
 
 ## Cloud Shell (drop-in)
 
-The `cloudshell/` folder is a self-contained bundle of the whole toolkit. Upload it to Azure Cloud Shell (or `git clone` the repo and `cd cloudshell`) and run everything through `run.sh`, which builds a venv, installs dependencies, and reuses the Cloud Shell portal session for auth — no `az login` needed.
+The `cloudshell/` folder is a self-contained bundle of the whole toolkit. Run everything through `run.sh`, which builds a venv, installs dependencies, and reuses the Cloud Shell portal session for auth — no `az login` needed.
+
+### Getting it into a locked-down (client) Cloud Shell
+
+When you can't `git clone` (client tenants often block it), build a single tarball and upload it via the Cloud Shell toolbar's **Upload** button:
 
 ```bash
-chmod +x run.sh
+./build-bundle.sh                 # writes ../azure-orphan-cloudshell.tar.gz
+```
 
+`build-bundle.sh` ships only an explicit whitelist of source files, so no scan output (`*.xlsx/csv/json/log`, `_runs/`) or bytecode can ever be bundled. It refuses to build if a GUID-shaped string (a stray tenant/subscription id) is found in a bundled file, and verifies `run.sh` is LF. Then, in Cloud Shell:
+
+```bash
+tar -xzf azure-orphan-cloudshell.tar.gz
+cd cloudshell
+chmod +x run.sh
+```
+
+### Commands
+
+```bash
 ./run.sh                                              # scan, console output
 ./run.sh --format excel --tenant <tenant-id>          # Excel workbook, tenant-scoped
 ./run.sh cleanup --tenant <id> --ids-file approved.txt           # preview deletions (dry-run)
