@@ -226,7 +226,7 @@ QUERIES = {
 | where type =~ 'microsoft.compute/availabilitysets'
 | where properties.virtualMachines == '[]' or array_length(properties.virtualMachines) == 0
 | project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
-        "cost": True,
+        "cost": False,  # availability sets are free; orphan value is hygiene, not cost
         "extra_col": "",
         "section": "COMPUTE",
     },
@@ -291,7 +291,7 @@ QUERIES = {
 | where isnull(properties.virtualMachine) or properties.virtualMachine == ''
 | where isnull(properties.privateEndpoint) or properties.privateEndpoint == ''
 | project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
-        "cost": True,
+        "cost": False,  # NICs are free; orphan value is hygiene, not cost
         "extra_col": "",
         "section": "NETWORKING",
     },
@@ -301,7 +301,7 @@ QUERIES = {
 | where isnull(properties.networkInterfaces) or properties.networkInterfaces == '[]' or array_length(properties.networkInterfaces) == 0
 | where isnull(properties.subnets) or properties.subnets == '[]' or array_length(properties.subnets) == 0
 | project id=tolower(id), name, resourceGroup, location, subscriptionId, tags""",
-        "cost": True,
+        "cost": False,  # NSGs are free; orphan value is hygiene, not cost
         "extra_col": "",
         "section": "NETWORKING",
     },
